@@ -1053,6 +1053,186 @@ router.get('/leaderboard/export-excel', requireAdmin, async (req: AuthRequest, r
   res.send(buf);
 });
 
+router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
+  const events = await prisma.event.findMany();
+
+  // 1. Technical Quiz Scores
+  let quizScores: any[] = [];
+  const quizEvent = events.find((e) => e.type === 'TECHNICAL_QUIZ');
+  if (quizEvent) {
+    const qualifications = await prisma.quizQualification.findMany({
+      where: { eventId: quizEvent.id },
+      include: { user: { select: { id: true, rollNo: true, name: true } } },
+      orderBy: [{ finalRank: 'asc' }, { round1Rank: 'asc' }],
+    });
+
+    if (qualifications.length > 0) {
+      quizScores = qualifications.map((q) => ({
+        id: q.id,
+        userId: q.userId,
+        rollNo: q.user.rollNo,
+        name: q.user.name,
+        round1Score: q.round1Score,
+        round1Rank: q.round1Rank,
+        round1Time: q.round1Time,
+        round2Score: q.round2Score,
+        round2Rank: q.round2Rank,
+        round2Time: q.round2Time,
+        finalScore: q.finalScore || q.round1Score,
+        finalRank: q.finalRank,
+        isQualified: q.isQualified,
+        totalPoints: q.finalScore || q.round1Score,
+      }));
+    } else {
+      const answers = await prisma.answer.groupBy({
+        by: ['userId'],
+        where: { eventId: quizEvent.id },
+        _sum: { pointsAwarded: true, timeTakenSeconds: true },
+        _count: { id: true },
+      });
+
+      const users = await prisma.user.findMany({
+        where: { id: { in: answers.map((a) => a.userId) } },
+        select: { id: true, rollNo: true, name: true },
+      });
+      const userMap = Object.fromEntries(users.map((u) => [u.id, u]));
+
+      quizScores = answers
+        .map((a) => {
+          const u = userMap[a.userId];
+          return {
+            id: a.userId,
+            userId: a.userId,
+            rollNo: u?.rollNo || 'N/A',
+            name: u?.name || 'N/A',
+            round1Score: a._sum.pointsAwarded ?? 0,
+            round1Rank: 0,
+            round1Time: a._sum.timeTakenSeconds ?? 0,
+            round2Score: 0,
+            round2Rank: 0,
+            round2Time: 0,
+            finalScore: a._sum.pointsAwarded ?? 0,
+            finalRank: 0,
+            isQualified: false,
+            totalPoints: a._sum.pointsAwarded ?? 0,
+          };
+        })
+        .sort((a, b) => b.totalPoints - a.totalPoints || a.round1Time - b.round1Time)
+        .map((item, idx) => ({
+          ...item,
+          round1Rank: idx + 1,
+          finalRank: idx + 1,
+          isQualified: idx < 10,
+        }));
+    }
+  }
+
+  // 2. Debugging Scores
+  let debuggingScores: any[] = [];
+  const debugEvent = events.find((e) => e.type === 'DEBUGGING');
+  if (debugEvent) {
+    const submissions = await prisma.submission.findMany({
+      where: { eventId: debugEvent.id },
+      include: { user: { select: { id: true, rollNo: true, name: true } } },
+      orderBy: { submittedAt: 'asc' },
+    });
+
+    const userMap: Record<
+      string,
+      {
+        userId: string;
+        rollNo: string;
+        name: string;
+        totalPoints: number;
+        problemsSolved: number;
+        solvedProblemIds: Set<string>;
+      }
+    > = {};
+
+    submissions.forEach((s) => {
+      if (!userMap[s.userId]) {
+        userMap[s.userId] = {
+          userId: s.userId,
+          rollNo: s.user.rollNo,
+          name: s.user.name,
+          totalPoints: 0,
+          problemsSolved: 0,
+          solvedProblemIds: new Set<string>(),
+        };
+      }
+      if (s.result === 'ACCEPTED' && !userMap[s.userId].solvedProblemIds.has(s.problemId)) {
+        userMap[s.userId].solvedProblemIds.add(s.problemId);
+        userMap[s.userId].totalPoints += s.pointsAwarded;
+        userMap[s.userId].problemsSolved += 1;
+      }
+    });
+
+    debuggingScores = Object.values(userMap)
+      .map((u) => ({
+        id: u.userId,
+        userId: u.userId,
+        rollNo: u.rollNo,
+        name: u.name,
+        totalPoints: u.totalPoints,
+        problemsSolved: u.problemsSolved,
+      }))
+      .sort((a, b) => b.totalPoints - a.totalPoints || b.problemsSolved - a.problemsSolved)
+      .map((item, idx) => ({ ...item, rank: idx + 1 }));
+  }
+
+  // 3. Master / Combined Scores
+  const masterScoresMap: Record<
+    string,
+    {
+      userId: string;
+      rollNo: string;
+      name: string;
+      quizPoints: number;
+      debuggingPoints: number;
+      totalPoints: number;
+    }
+  > = {};
+
+  quizScores.forEach((q) => {
+    masterScoresMap[q.userId] = {
+      userId: q.userId,
+      rollNo: q.rollNo,
+      name: q.name,
+      quizPoints: q.totalPoints || 0,
+      debuggingPoints: 0,
+      totalPoints: q.totalPoints || 0,
+    };
+  });
+
+  debuggingScores.forEach((d) => {
+    if (!masterScoresMap[d.userId]) {
+      masterScoresMap[d.userId] = {
+        userId: d.userId,
+        rollNo: d.rollNo,
+        name: d.name,
+        quizPoints: 0,
+        debuggingPoints: d.totalPoints || 0,
+        totalPoints: d.totalPoints || 0,
+      };
+    } else {
+      masterScoresMap[d.userId].debuggingPoints = d.totalPoints || 0;
+      masterScoresMap[d.userId].totalPoints += d.totalPoints || 0;
+    }
+  });
+
+  const masterScores = Object.values(masterScoresMap)
+    .sort((a, b) => b.totalPoints - a.totalPoints)
+    .map((item, idx) => ({ ...item, rank: idx + 1, id: item.userId }));
+
+  res.json({
+    success: true,
+    quizScores,
+    debuggingScores,
+    masterScores,
+    events,
+  });
+});
+
 router.get('/results', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
   const events = await prisma.event.findMany();
   const results: Record<string, unknown[]> = {};

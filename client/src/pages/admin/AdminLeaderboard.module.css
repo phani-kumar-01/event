@@ -1,0 +1,271 @@
+.leaderboardContainer {
+  background: #0A192F;
+  border-radius: 8px;
+  border: 1px solid #1e293b;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: #f8fafc;
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: #090d16;
+  border-bottom: 1px solid #1e293b;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.panelTitle {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.panelActions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.filterPills {
+  display: flex;
+  background: #020617;
+  padding: 0.25rem;
+  border-radius: 6px;
+  border: 1px solid #1e293b;
+  gap: 0.25rem;
+}
+
+.filterPillBtn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.35rem 0.65rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.filterPillBtn:hover:not(.filterPillBtnActive) {
+  color: #f8fafc;
+  background: #1e293b;
+}
+
+.filterPillBtnActive {
+  background: #8B0000 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.searchInput {
+  background: #020617;
+  border: 1px solid #334155;
+  color: #f8fafc;
+  padding: 0.4rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  width: 220px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.searchInput:focus {
+  border-color: #38bdf8;
+}
+
+.btnExport {
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  padding: 0.4rem 0.85rem;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.btnExport:hover {
+  background: #334155;
+}
+
+/* ── Empty State ─────────────────────────────────────────────────────────── */
+.emptyStateCard {
+  background: #0A192F;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.emptyStateIcon {
+  font-size: 2.5rem;
+}
+
+.emptyStateTitle {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.emptyStateText {
+  font-size: 0.875rem;
+  color: #94a3b8;
+  max-width: 480px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── Dark Table Styling (Dark Navy #0A192F) ───────────────────────────────── */
+.tableWrapper {
+  overflow-x: auto;
+  background: #0A192F;
+}
+
+.darkTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  text-align: left;
+  background: #0A192F;
+  color: #f8fafc;
+}
+
+.darkTable th {
+  background: #090d16;
+  color: #94a3b8;
+  font-size: 0.725rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.75rem 1rem;
+  border-bottom: 2px solid #1e293b;
+  user-select: none;
+}
+
+.thSortable {
+  cursor: pointer;
+}
+
+.thSortable:hover {
+  color: #38bdf8;
+}
+
+.thNumeric,
+.tdNumeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.darkTable td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #1e293b;
+  color: #f1f5f9;
+  vertical-align: middle;
+  background: #0A192F;
+}
+
+.darkTable tbody tr:nth-child(even) td {
+  background: #0d1f38;
+}
+
+.darkTable tbody tr:hover td {
+  background: #132744;
+}
+
+.rowTop10 td {
+  background: #11223b !important;
+}
+
+.rankBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 800;
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #334155;
+}
+
+.rankGold {
+  background: #ffd700;
+  color: #000000;
+  border-color: #eab308;
+  box-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
+}
+
+.rankSilver {
+  background: #c0c0c0;
+  color: #000000;
+  border-color: #cbd5e1;
+}
+
+.rankBronze {
+  background: #cd7f32;
+  color: #ffffff;
+  border-color: #b45309;
+}
+
+.rollNoText {
+  color: #38bdf8;
+}
+
+.nameText {
+  color: #f8fafc;
+}
+
+.scoreText {
+  color: #ff6b6b;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9375rem;
+}
+
+.solvedBadge {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 800;
+  font-size: 0.75rem;
+}
+
+.statusPill {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  background: #090d16;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #1e293b;
+}
+
+.noResultsCell {
+  text-align: center;
+  padding: 2.5rem 1rem !important;
+  color: #64748b;
+  font-style: italic;
+}
