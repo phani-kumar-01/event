@@ -3,7 +3,6 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../server/node_modules/.prisma/client"
 }
 
 datasource db {
@@ -20,28 +19,45 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  answers     Answer[]
-  submissions Submission[]
+  answers            Answer[]
+  submissions        Submission[]
+  puzzleSubmissions  PuzzleSubmission[]
+  quizQualifications QuizQualification[]
 
   @@index([rollNo])
 }
 
 model Event {
   id              String      @id @default(cuid())
-  type            String      @unique
+  type            String      @unique // "DEBUGGING" | "TECHNICAL_QUIZ"
   name            String
   startTime       DateTime
   endTime         DateTime
-  status          String      @default("DRAFT")
+  status          String      @default("DRAFT") // "DRAFT" | "READY" | "RUNNING" | "PAUSED" | "FINISHED"
   durationSeconds Int
   version         Int         @default(0)
+  
+  // Technical Quiz 2-Round Config
+  currentRound    Int         @default(1) // 1 (Round 1) | 2 (Round 2)
+  round1Status    String      @default("DRAFT")
+  round2Status    String      @default("DRAFT")
+  round1Duration  Int         @default(1800) // 30 mins in seconds
+  round2Duration  Int         @default(1200) // 20 mins in seconds
+  round1Weight    Float       @default(0.4) // 40%
+  round2Weight    Float       @default(0.6) // 60%
+  qualifierCount  Int         @default(10) // Top 10 proceed to Round 2
+  maxParticipants Int         @default(60)
+
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  debuggingProblems DebuggingProblem[]
-  quizQuestions     QuizQuestion[]
-  answers           Answer[]
-  submissions       Submission[]
+  debuggingProblems  DebuggingProblem[]
+  quizChallenges     QuizChallenge[]
+  quizQuestions      QuizQuestion[]
+  answers            Answer[]
+  submissions        Submission[]
+  puzzleSubmissions  PuzzleSubmission[]
+  quizQualifications QuizQualification[]
 }
 
 model DebuggingProblem {
@@ -65,36 +81,115 @@ model DebuggingProblem {
   @@index([eventId])
 }
 
+model QuizChallenge {
+  id          String   @id @default(cuid())
+  eventId     String
+  round       Int      @default(1) // 1 (Round 1) or 2 (Round 2)
+  type        String   // "RAPID_FIRE", "GUESS_THE_TECH", "TECH_SHUFFLE", "PUZZLE_GRID", "TECH_SHOWDOWN", "TECH_TODAY", "REAL_OR_FAKE", "FINAL_CHALLENGE"
+  title       String
+  subtitle    String   @default("")
+  description String   @default("")
+  order       Int      @default(0)
+  points      Int      @default(100)
+  timeLimit   Int      @default(0) // seconds (0 for default round timer)
+  config      String   @default("{}") // JSON: image, shuffle moves, shuffle items, etc.
+  isActive    Boolean  @default(true)
+  isLocked    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  event             Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  questions         QuizQuestion[]
+  puzzleSubmissions PuzzleSubmission[]
+
+  @@index([eventId, round])
+}
+
 model QuizQuestion {
   id            String   @id @default(cuid())
   eventId       String
+  challengeId   String?
+  round         Int      @default(1) // 1 or 2
+  category      String   @default("TECH") // "AI", "GADGETS", "INTERNET", "CYBERSECURITY", "SPACE", "GAMING", "FOUNDERS", "CURRENT_AFFAIRS", "REAL_OR_FAKE", "CULTURE"
+  type          String   @default("MCQ") // "MCQ" | "REAL_OR_FAKE" | "SHUFFLE_ORDER" | "GUESS_IMAGE"
   question      String
-  optionA       String
-  optionB       String
-  optionC       String
-  optionD       String
-  correctAnswer String   // "A" | "B" | "C" | "D"
+  imageUrl      String   @default("")
+  optionA       String   @default("")
+  optionB       String   @default("")
+  optionC       String   @default("")
+  optionD       String   @default("")
+  correctAnswer String   // "A" | "B" | "C" | "D" | "REAL" | "FAKE" | JSON array for shuffle
   explanation   String   @default("")
   points        Int      @default(10)
   order         Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  event   Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  answers Answer[]
+  event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  challenge QuizChallenge? @relation(fields: [challengeId], references: [id], onDelete: SetNull)
+  answers   Answer[]
 
-  @@index([eventId])
+  @@index([eventId, round])
+  @@index([challengeId])
+}
+
+model PuzzleSubmission {
+  id               String   @id @default(cuid())
+  userId           String
+  eventId          String
+  challengeId      String
+  round            Int      @default(1)
+  moves            Int      @default(0)
+  timeTakenSeconds Int      @default(0)
+  isSolved         Boolean  @default(false)
+  initialState     String   @default("[]") // JSON
+  pointsAwarded    Int      @default(0)
+  submittedAt      DateTime @default(now())
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event     Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  challenge QuizChallenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, challengeId])
+  @@index([eventId, round])
+}
+
+model QuizQualification {
+  id          String    @id @default(cuid())
+  eventId     String
+  userId      String
+  round1Score Float     @default(0)
+  round1Rank  Int       @default(0)
+  round1Time  Int       @default(0)
+  isQualified Boolean   @default(false) // true if selected for Top 10
+  round2Score Float     @default(0)
+  round2Rank  Int       @default(0)
+  round2Time  Int       @default(0)
+  finalScore  Float     @default(0)
+  finalRank   Int       @default(0)
+  qualifiedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId, isQualified])
 }
 
 model Answer {
-  id             String   @id @default(cuid())
-  userId         String
-  eventId        String
-  questionId     String
-  selectedAnswer String   // "A" | "B" | "C" | "D"
-  isCorrect      Boolean
-  pointsAwarded  Int      @default(0)
-  createdAt      DateTime @default(now())
+  id               String   @id @default(cuid())
+  userId           String
+  eventId          String
+  questionId       String
+  round            Int      @default(1)
+  selectedAnswer   String   // "A" | "B" | "C" | "D" | "REAL" | "FAKE" | JSON sequence
+  isCorrect        Boolean
+  pointsAwarded    Int      @default(0)
+  timeTakenSeconds Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   event    Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -102,6 +197,7 @@ model Answer {
 
   @@unique([userId, questionId]) // one answer per question per student
   @@index([userId, eventId])
+  @@index([eventId, round])
 }
 
 model Submission {

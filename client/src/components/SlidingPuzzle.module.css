@@ -1,0 +1,263 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(139, 0, 0, 0.08);
+  border: 1px solid #f0e6e6;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.titleArea {
+  flex: 1;
+  min-width: 260px;
+}
+
+.title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--color-primary, #8b0000);
+  margin-bottom: 0.25rem;
+}
+
+.subtitle {
+  font-size: 0.875rem;
+  color: #666;
+  line-height: 1.4;
+}
+
+.stats {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.statBox {
+  background: #faf7f7;
+  border: 1px solid #ebdada;
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.statLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #888;
+}
+
+.statVal {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #222;
+  font-family: var(--font-mono, monospace);
+}
+
+.statValGold {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #d97706;
+}
+
+.victoryBanner {
+  width: 100%;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #065f46;
+  animation: pulse 1.5s infinite;
+}
+
+.victoryIcon {
+  font-size: 2rem;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.boardWrapper {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 100px);
+  grid-template-rows: repeat(3, 100px);
+  gap: 8px;
+  background: #2b0000;
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.tile {
+  background: linear-gradient(135deg, #8b0000, #5a0000);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: transform 0.12s ease, background 0.2s ease, box-shadow 0.15s ease;
+  user-select: none;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+.tile:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, #a51d1d, #700000);
+  box-shadow: 0 6px 12px rgba(139, 0, 0, 0.35);
+}
+
+.tile:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.tileCorrect {
+  background: linear-gradient(135deg, #059669, #047857) !important;
+  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.3) !important;
+}
+
+.tileNumber {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  opacity: 0.75;
+}
+
+.tileIcon {
+  font-size: 1.8rem;
+  margin-bottom: 2px;
+}
+
+.tileLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.checkMark {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 0.75rem;
+  font-weight: 900;
+  color: #a7f3d0;
+}
+
+.emptyTile {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emptyText {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.25);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.footer {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 0.75rem;
+  border-top: 1px solid #f0e6e6;
+}
+
+.targetGuide {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.guideTitle {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #777;
+  text-transform: uppercase;
+}
+
+.miniTargetGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  grid-template-rows: repeat(3, 16px);
+  gap: 2px;
+  background: #eee;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.miniCell {
+  background: #8b0000;
+  color: #fff;
+  font-size: 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  border-radius: 2px;
+}
+
+.resetBtn {
+  background: transparent;
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.resetBtn:hover {
+  background: #f3f4f6;
+  border-color: #9ca3af;
+  color: #111827;
+}
+
+@media (max-width: 480px) {
+  .board {
+    grid-template-columns: repeat(3, 80px);
+    grid-template-rows: repeat(3, 80px);
+    gap: 6px;
+  }
+  .tileIcon {
+    font-size: 1.4rem;
+  }
+}

@@ -4,7 +4,6 @@ import prisma from '../utils/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { getCurrentEvent } from '../services/eventService';
 import { executeCode, runCodePreview, TestCase } from '../services/executionService';
-import { Server } from 'socket.io';
 
 const router = Router();
 
@@ -22,21 +21,51 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<
 });
 
 // ─── GET /api/current-event ──────────────────────────────────────────────────
-router.get('/current-event', requireAuth, async (_req: AuthRequest, res: Response): Promise<void> => {
+router.get('/current-event', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const event = await getCurrentEvent();
+  if (!event) {
+    res.json({ event: null });
+    return;
+  }
+
+  // Check if current user is qualified for Round 2 if in Technical Quiz
+  let isQualifiedForRound2 = false;
+  let qualification = null;
+  if (event.type === 'TECHNICAL_QUIZ') {
+    qualification = await prisma.quizQualification.findUnique({
+      where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
+    });
+    isQualifiedForRound2 = !!qualification?.isQualified;
+  }
+
   res.json({
-    event: event
-      ? {
-          id: event.id,
-          type: event.type,
-          name: event.name,
-          status: event.status,
-          startTime: event.startTime.toISOString(),
-          endTime: event.endTime.toISOString(),
-          version: event.version,
-          serverTime: new Date().toISOString(),
-        }
-      : null,
+    event: {
+      id: event.id,
+      type: event.type,
+      name: event.name,
+      status: event.status,
+      startTime: event.startTime.toISOString(),
+      endTime: event.endTime.toISOString(),
+      version: event.version,
+      currentRound: event.currentRound || 1,
+      round1Status: event.round1Status || 'DRAFT',
+      round2Status: event.round2Status || 'DRAFT',
+      round1Duration: event.round1Duration || 1800,
+      round2Duration: event.round2Duration || 1200,
+      qualifierCount: event.qualifierCount || 10,
+      isQualifiedForRound2,
+      qualification: qualification
+        ? {
+            isQualified: qualification.isQualified,
+            round1Score: qualification.round1Score,
+            round1Rank: qualification.round1Rank,
+            round2Score: qualification.round2Score,
+            finalScore: qualification.finalScore,
+            finalRank: qualification.finalRank,
+          }
+        : null,
+      serverTime: new Date().toISOString(),
+    },
   });
 });
 
@@ -47,6 +76,15 @@ router.get('/events/:id', requireAuth, async (req: AuthRequest, res: Response): 
     res.status(404).json({ error: 'Event not found' });
     return;
   }
+
+  let isQualifiedForRound2 = false;
+  if (event.type === 'TECHNICAL_QUIZ') {
+    const qual = await prisma.quizQualification.findUnique({
+      where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
+    });
+    isQualifiedForRound2 = !!qual?.isQualified;
+  }
+
   res.json({
     event: {
       id: event.id,
@@ -56,12 +94,385 @@ router.get('/events/:id', requireAuth, async (req: AuthRequest, res: Response): 
       startTime: event.startTime.toISOString(),
       endTime: event.endTime.toISOString(),
       version: event.version,
+      currentRound: event.currentRound || 1,
+      round1Status: event.round1Status || 'DRAFT',
+      round2Status: event.round2Status || 'DRAFT',
+      round1Duration: event.round1Duration || 1800,
+      round2Duration: event.round2Duration || 1200,
+      isQualifiedForRound2,
       serverTime: new Date().toISOString(),
     },
   });
 });
 
-// ─── GET /api/events/:id/debugging-problems ──────────────────────────────────
+// ─── GET /api/events/:id/quiz-challenges ────────────────────────────────────
+router.get(
+  '/events/:id/quiz-challenges',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const event = await prisma.event.findUnique({ where: { id: String(req.params.id) } });
+    if (!event || event.type !== 'TECHNICAL_QUIZ') {
+      res.status(404).json({ error: 'Technical Quiz event not found' });
+      return;
+    }
+
+    const round = Number(req.query.round) || event.currentRound || 1;
+
+    // Fetch challenges for this round
+    const challenges = await prisma.quizChallenge.findMany({
+      where: { eventId: event.id, round, isActive: true },
+      orderBy: { order: 'asc' },
+      include: {
+        _count: { select: { questions: true } },
+      },
+    });
+
+    // Check student's answers/puzzle progress per challenge
+    const answers = await prisma.answer.findMany({
+      where: { eventId: event.id, userId: req.user!.userId, round },
+      include: { question: { select: { challengeId: true } } },
+    });
+
+    const puzzleSubs = await prisma.puzzleSubmission.findMany({
+      where: { eventId: event.id, userId: req.user!.userId, round },
+    });
+
+    const challengeProgress: Record<string, { answered: number; isCompleted: boolean }> = {};
+    for (const c of challenges) {
+      if (c.type === 'PUZZLE_GRID') {
+        const pz = puzzleSubs.find((p) => p.challengeId === c.id);
+        challengeProgress[c.id] = {
+          answered: pz ? 1 : 0,
+          isCompleted: !!pz?.isSolved,
+        };
+      } else {
+        const count = answers.filter((a) => a.question.challengeId === c.id).length;
+        const total = c._count.questions;
+        challengeProgress[c.id] = {
+          answered: count,
+          isCompleted: total > 0 && count >= total,
+        };
+      }
+    }
+
+    res.json({
+      round,
+      challenges: challenges.map((c) => ({
+        id: c.id,
+        round: c.round,
+        type: c.type,
+        title: c.title,
+        subtitle: c.subtitle,
+        description: c.description,
+        order: c.order,
+        points: c.points,
+        timeLimit: c.timeLimit,
+        config: c.config ? JSON.parse(c.config) : {},
+        isActive: c.isActive,
+        isLocked: c.isLocked,
+        questionCount: c._count.questions,
+        progress: challengeProgress[c.id] || { answered: 0, isCompleted: false },
+      })),
+    });
+  }
+);
+
+// ─── GET /api/events/:id/quiz-questions ──────────────────────────────────────
+router.get(
+  '/events/:id/quiz-questions',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const event = await prisma.event.findUnique({ where: { id: String(req.params.id) } });
+    if (!event || event.type !== 'TECHNICAL_QUIZ') {
+      res.status(404).json({ error: 'Technical Quiz event not found' });
+      return;
+    }
+
+    const round = Number(req.query.round) || event.currentRound || 1;
+    const challengeId = req.query.challengeId ? String(req.query.challengeId) : undefined;
+
+    // If student is in Round 2, ensure they are qualified
+    if (round === 2) {
+      const qual = await prisma.quizQualification.findUnique({
+        where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
+      });
+      if (!qual || !qual.isQualified) {
+        res.status(403).json({ error: 'You are not qualified for Round 2' });
+        return;
+      }
+    }
+
+    const questions = await prisma.quizQuestion.findMany({
+      where: {
+        eventId: event.id,
+        round,
+        ...(challengeId && { challengeId }),
+      },
+      orderBy: { order: 'asc' },
+      select: {
+        id: true,
+        challengeId: true,
+        round: true,
+        category: true,
+        type: true,
+        question: true,
+        imageUrl: true,
+        optionA: true,
+        optionB: true,
+        optionC: true,
+        optionD: true,
+        points: true,
+        order: true,
+        // Exclude correctAnswer and explanation for competitive integrity
+      },
+    });
+
+    res.json({ questions });
+  }
+);
+
+// ─── GET /api/events/:id/my-answers ──────────────────────────────────────────
+router.get(
+  '/events/:id/my-answers',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const eventId = String(req.params.id);
+    const round = Number(req.query.round) || undefined;
+
+    const answers = await prisma.answer.findMany({
+      where: {
+        userId: req.user!.userId,
+        eventId,
+        ...(round && { round }),
+      },
+      select: {
+        questionId: true,
+        selectedAnswer: true,
+        isCorrect: true,
+        pointsAwarded: true,
+        round: true,
+      },
+    });
+
+    res.json({ answers });
+  }
+);
+
+// ─── GET /api/events/:id/my-puzzle ───────────────────────────────────────────
+router.get(
+  '/events/:id/my-puzzle',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const eventId = String(req.params.id);
+    const challengeId = req.query.challengeId ? String(req.query.challengeId) : undefined;
+
+    const puzzle = await prisma.puzzleSubmission.findFirst({
+      where: {
+        userId: req.user!.userId,
+        eventId,
+        ...(challengeId && { challengeId }),
+      },
+    });
+
+    res.json({ puzzle });
+  }
+);
+
+// ─── POST /api/events/:id/puzzle-submit ──────────────────────────────────────
+const puzzleSubmitSchema = z.object({
+  challengeId: z.string().min(1),
+  moves: z.number().int().nonnegative(),
+  timeTakenSeconds: z.number().int().nonnegative(),
+  isSolved: z.boolean(),
+  initialState: z.string().default('[]'),
+});
+
+router.post(
+  '/events/:id/puzzle-submit',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const parsed = puzzleSubmitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.errors[0].message });
+      return;
+    }
+
+    const { challengeId, moves, timeTakenSeconds, isSolved, initialState } = parsed.data;
+    const eventId = String(req.params.id);
+    const userId = req.user!.userId;
+
+    const event = await prisma.event.findUnique({ where: { id: eventId } });
+    if (!event || event.type !== 'TECHNICAL_QUIZ') {
+      res.status(404).json({ error: 'Quiz event not found' });
+      return;
+    }
+    if (event.status !== 'RUNNING') {
+      res.status(409).json({ error: 'Quiz is not currently running' });
+      return;
+    }
+
+    const challenge = await prisma.quizChallenge.findUnique({ where: { id: challengeId } });
+    if (!challenge) {
+      res.status(404).json({ error: 'Puzzle challenge not found' });
+      return;
+    }
+
+    // Calculate score for puzzle
+    let pointsAwarded = 0;
+    if (isSolved) {
+      const basePoints = challenge.points || 150;
+      // Bonus for fast completion
+      const speedBonus = Math.max(0, Math.floor((180 - timeTakenSeconds) / 4));
+      pointsAwarded = basePoints + speedBonus;
+    }
+
+    const submission = await prisma.puzzleSubmission.upsert({
+      where: { userId_challengeId: { userId, challengeId } },
+      create: {
+        userId,
+        eventId,
+        challengeId,
+        round: challenge.round,
+        moves,
+        timeTakenSeconds,
+        isSolved,
+        initialState,
+        pointsAwarded,
+      },
+      update: {
+        moves,
+        timeTakenSeconds,
+        isSolved,
+        pointsAwarded,
+      },
+    });
+
+    res.json({
+      submission: {
+        id: submission.id,
+        isSolved: submission.isSolved,
+        moves: submission.moves,
+        timeTakenSeconds: submission.timeTakenSeconds,
+        pointsAwarded: submission.pointsAwarded,
+      },
+    });
+  }
+);
+
+// ─── POST /api/events/:id/answers ────────────────────────────────────────────
+const submitAnswerSchema = z.object({
+  questionId: z.string().min(1),
+  selectedAnswer: z.string().min(1),
+  timeTakenSeconds: z.number().int().nonnegative().default(0),
+});
+
+router.post(
+  '/events/:id/answers',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const parsed = submitAnswerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.errors[0].message });
+      return;
+    }
+
+    const { questionId, selectedAnswer, timeTakenSeconds } = parsed.data;
+    const eventId = String(req.params.id);
+    const userId = req.user!.userId;
+
+    const event = await prisma.event.findUnique({ where: { id: eventId } });
+    if (!event || event.type !== 'TECHNICAL_QUIZ') {
+      res.status(404).json({ error: 'Quiz event not found' });
+      return;
+    }
+    if (event.status !== 'RUNNING') {
+      res.status(409).json({ error: 'Quiz is not currently running' });
+      return;
+    }
+
+    const question = await prisma.quizQuestion.findFirst({
+      where: { id: questionId, eventId },
+    });
+    if (!question) {
+      res.status(404).json({ error: 'Question not found in this event' });
+      return;
+    }
+
+    // If Round 2, verify student is qualified
+    if (question.round === 2) {
+      const qual = await prisma.quizQualification.findUnique({
+        where: { eventId_userId: { eventId, userId } },
+      });
+      if (!qual || !qual.isQualified) {
+        res.status(403).json({ error: 'You are not qualified for Round 2' });
+        return;
+      }
+    }
+
+    // Server-side correctness check
+    let isCorrect = false;
+    if (question.type === 'SHUFFLE_ORDER') {
+      try {
+        const studentArr = JSON.parse(selectedAnswer);
+        const correctArr = JSON.parse(question.correctAnswer);
+        isCorrect = JSON.stringify(studentArr) === JSON.stringify(correctArr);
+      } catch {
+        isCorrect = selectedAnswer.trim() === question.correctAnswer.trim();
+      }
+    } else {
+      isCorrect = question.correctAnswer.trim().toUpperCase() === selectedAnswer.trim().toUpperCase();
+    }
+
+    const pointsAwarded = isCorrect ? question.points : 0;
+
+    const answer = await prisma.answer.upsert({
+      where: { userId_questionId: { userId, questionId } },
+      create: {
+        userId,
+        eventId,
+        questionId,
+        round: question.round,
+        selectedAnswer,
+        isCorrect,
+        pointsAwarded,
+        timeTakenSeconds,
+      },
+      update: {
+        selectedAnswer,
+        isCorrect,
+        pointsAwarded,
+        timeTakenSeconds,
+      },
+    });
+
+    res.json({
+      answer: {
+        id: answer.id,
+        questionId: answer.questionId,
+        selectedAnswer: answer.selectedAnswer,
+        isCorrect: answer.isCorrect,
+        pointsAwarded: answer.pointsAwarded,
+        explanation: question.explanation,
+      },
+    });
+  }
+);
+
+// ─── GET /api/events/:id/my-qualification ────────────────────────────────────
+router.get(
+  '/events/:id/my-qualification',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const eventId = String(req.params.id);
+    const qual = await prisma.quizQualification.findUnique({
+      where: { eventId_userId: { eventId, userId: req.user!.userId } },
+    });
+
+    res.json({ qualification: qual });
+  }
+);
+
+// ─── DEBUGGING ROUTES (Kept 100% Intact) ──────────────────────────────────────
 router.get(
   '/events/:id/debugging-problems',
   requireAuth,
@@ -88,7 +499,6 @@ router.get(
         points: true,
         timeLimit: true,
         order: true,
-        // Exclude testCases from student view (backend-only)
       },
     });
 
@@ -96,54 +506,6 @@ router.get(
   }
 );
 
-// ─── GET /api/events/:id/quiz-questions ──────────────────────────────────────
-router.get(
-  '/events/:id/quiz-questions',
-  requireAuth,
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    const event = await prisma.event.findUnique({ where: { id: String(req.params.id) } });
-    if (!event) {
-      res.status(404).json({ error: 'Event not found' });
-      return;
-    }
-    if (event.type !== 'TECHNICAL_QUIZ') {
-      res.status(400).json({ error: 'This event is not a quiz competition' });
-      return;
-    }
-
-    const questions = await prisma.quizQuestion.findMany({
-      where: { eventId: String(req.params.id) },
-      orderBy: { order: 'asc' },
-      select: {
-        id: true,
-        question: true,
-        optionA: true,
-        optionB: true,
-        optionC: true,
-        optionD: true,
-        points: true,
-        order: true,
-        // Exclude correctAnswer and explanation from student view
-      },
-    });
-
-    res.json({ questions });
-  }
-);
-
-// ─── GET /api/events/:id/my-answers ──────────────────────────────────────────
-router.get(
-  '/events/:id/my-answers',
-  requireAuth,
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    const answers = await prisma.answer.findMany({
-      where: { userId: req.user!.userId, eventId: String(req.params.id) },
-    });
-    res.json({ answers });
-  }
-);
-
-// ─── GET /api/events/:id/my-submissions ──────────────────────────────────────
 router.get(
   '/events/:id/my-submissions',
   requireAuth,
@@ -156,7 +518,6 @@ router.get(
   }
 );
 
-// ─── POST /api/events/:id/run-code ───────────────────────────────────────────
 router.post(
   '/events/:id/run-code',
   requireAuth,
@@ -182,7 +543,6 @@ router.post(
   }
 );
 
-// ─── POST /api/events/:id/submit-code ────────────────────────────────────────
 const submitCodeSchema = z.object({
   problemId: z.string().min(1),
   code: z.string().min(1, 'Code cannot be empty'),
@@ -202,7 +562,6 @@ router.post(
     const eventId = String(req.params.id);
     const userId = req.user!.userId;
 
-    // Validate event
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event || event.type !== 'DEBUGGING') {
       res.status(404).json({ error: 'Debugging event not found' });
@@ -213,7 +572,6 @@ router.post(
       return;
     }
 
-    // Validate problem belongs to event
     const problem = await prisma.debuggingProblem.findFirst({
       where: { id: problemId, eventId },
     });
@@ -222,23 +580,19 @@ router.post(
       return;
     }
 
-    // Execute code against test cases
-    const storedTestCases = typeof problem.testCases === 'string'
-      ? JSON.parse(problem.testCases)
-      : problem.testCases;
-    const testCases = z.array(z.object({ input: z.string(), expectedOutput: z.string() }))
+    const storedTestCases =
+      typeof problem.testCases === 'string' ? JSON.parse(problem.testCases) : problem.testCases;
+    const testCases = z
+      .array(z.object({ input: z.string(), expectedOutput: z.string() }))
       .parse(storedTestCases) as TestCase[];
     const execResult = await executeCode(code, testCases, problem.timeLimit);
 
-    // Calculate points — full points for ACCEPTED, 0 otherwise
     const pointsAwarded = execResult.result === 'ACCEPTED' ? problem.points : 0;
 
-    // Check if student already has an ACCEPTED submission for this problem
     const existingAccepted = await prisma.submission.findFirst({
       where: { userId, problemId, result: 'ACCEPTED' },
     });
 
-    // Store submission (always, so student can see history)
     const submission = await prisma.submission.create({
       data: {
         userId,
@@ -248,7 +602,7 @@ router.post(
         result: execResult.result,
         compileOutput: execResult.compileOutput,
         runOutput: execResult.runOutput,
-        pointsAwarded: existingAccepted ? 0 : pointsAwarded, // no double points
+        pointsAwarded: existingAccepted ? 0 : pointsAwarded,
       },
     });
 
@@ -262,70 +616,6 @@ router.post(
         passedCases: execResult.passedCases,
         totalCases: execResult.totalCases,
         submittedAt: submission.submittedAt.toISOString(),
-      },
-    });
-  }
-);
-
-// ─── POST /api/events/:id/answers ────────────────────────────────────────────
-const submitAnswerSchema = z.object({
-  questionId: z.string().min(1),
-  selectedAnswer: z.enum(['A', 'B', 'C', 'D']),
-});
-
-router.post(
-  '/events/:id/answers',
-  requireAuth,
-  async (req: AuthRequest, res: Response): Promise<void> => {
-    const parsed = submitAnswerSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.errors[0].message });
-      return;
-    }
-
-    const { questionId, selectedAnswer } = parsed.data;
-    const eventId = String(req.params.id);
-    const userId = req.user!.userId;
-
-    // Validate event
-    const event = await prisma.event.findUnique({ where: { id: eventId } });
-    if (!event || event.type !== 'TECHNICAL_QUIZ') {
-      res.status(404).json({ error: 'Quiz event not found' });
-      return;
-    }
-    if (event.status !== 'RUNNING') {
-      res.status(409).json({ error: 'Quiz is not currently running' });
-      return;
-    }
-
-    // Validate question belongs to event
-    const question = await prisma.quizQuestion.findFirst({
-      where: { id: questionId, eventId },
-    });
-    if (!question) {
-      res.status(404).json({ error: 'Question not found in this event' });
-      return;
-    }
-
-    // Server-side correctness check
-    const isCorrect = question.correctAnswer === selectedAnswer;
-    const pointsAwarded = isCorrect ? question.points : 0;
-
-    // Upsert answer (student can change answer while event is running)
-    const answer = await prisma.answer.upsert({
-      where: { userId_questionId: { userId, questionId } },
-      create: { userId, eventId, questionId, selectedAnswer, isCorrect, pointsAwarded },
-      update: { selectedAnswer, isCorrect, pointsAwarded },
-    });
-
-    res.json({
-      answer: {
-        id: answer.id,
-        questionId: answer.questionId,
-        selectedAnswer: answer.selectedAnswer,
-        isCorrect: answer.isCorrect,
-        pointsAwarded: answer.pointsAwarded,
-        explanation: question.explanation,
       },
     });
   }

@@ -64,6 +64,9 @@ export function emitEventStateChanged(
     startTime: Date;
     endTime: Date;
     version: number;
+    currentRound?: number;
+    round1Status?: string;
+    round2Status?: string;
   }
 ): void {
   const payload = {
@@ -74,6 +77,9 @@ export function emitEventStateChanged(
     startTime: event.startTime.toISOString(),
     endTime: event.endTime.toISOString(),
     version: event.version,
+    currentRound: event.currentRound || 1,
+    round1Status: event.round1Status || 'DRAFT',
+    round2Status: event.round2Status || 'DRAFT',
     serverTime: new Date().toISOString(),
   };
 
