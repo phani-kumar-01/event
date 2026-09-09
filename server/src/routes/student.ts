@@ -722,13 +722,37 @@ router.get(
         description: true,
         buggyCode: true,
         expectedOutput: true,
+        testCases: true,
         points: true,
         timeLimit: true,
         order: true,
       },
     });
 
-    res.json({ problems });
+    const formattedProblems = problems.map((p) => {
+      let sampleInput = '';
+      try {
+        const parsed = typeof p.testCases === 'string' ? JSON.parse(p.testCases) : p.testCases;
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].input) {
+          sampleInput = parsed[0].input;
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+      return {
+        id: p.id,
+        title: p.title,
+        description: p.description,
+        buggyCode: p.buggyCode,
+        expectedOutput: p.expectedOutput,
+        sampleInput,
+        points: p.points,
+        timeLimit: p.timeLimit,
+        order: p.order,
+      };
+    });
+
+    res.json({ problems: formattedProblems });
   }
 );
 

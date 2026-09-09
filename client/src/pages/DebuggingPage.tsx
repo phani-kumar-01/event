@@ -24,12 +24,21 @@ interface Event {
 interface Problem {
   id: string;
   title: string;
-  description: string;
+  description?: string;
   buggyCode: string;
   expectedOutput: string;
+  sampleInput?: string;
   points: number;
   timeLimit: number;
   order: number;
+}
+
+interface Submission {
+  id: string;
+  problemId: string;
+  result: 'ACCEPTED' | 'WRONG_ANSWER' | 'COMPILE_ERROR' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR';
+  pointsAwarded: number;
+  submittedAt: string;
 }
 
 interface SubmissionResult {
@@ -55,7 +64,8 @@ export default function DebuggingPage() {
   const [event, setEvent] = useState<Event | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [code, setCode] = useState('');
+  const [codeMap, setCodeMap] = useState<Record<string, string>>({});
+  const [solvedProblemIds, setSolvedProblemIds] = useState<Set<string>>(new Set());
   const [eventVersion, setEventVersion] = useState(0);
 
   const [running, setRunning] = useState(false);
@@ -67,7 +77,7 @@ export default function DebuggingPage() {
   const isEventRunning = event?.status === 'RUNNING';
   const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
 
-  // ── Fetch current event and problems ─────────────────────────────────────
+  // ── Fetch current event, problems & submissions ─────────────────────────────
   const loadEventAndProblems = useCallback(async () => {
     try {
       const res = await api.get<{ event: Event | null }>('/current-event');
@@ -86,12 +96,44 @@ export default function DebuggingPage() {
       setEvent(currentEvent);
       setEventVersion(currentEvent.version);
 
-      const probRes = await api.get<{ problems: Problem[] }>(
-        `/events/${currentEvent.id}/debugging-problems`
-      );
-      setProblems(probRes.data.problems);
-      if (probRes.data.problems.length > 0) {
-        setCode(probRes.data.problems[0].buggyCode);
+      const [probRes, subRes] = await Promise.all([
+        api.get<{ problems: Problem[] }>(`/events/${currentEvent.id}/debugging-problems`),
+        api.get<{ submissions: Submission[] }>(`/events/${currentEvent.id}/my-submissions`).catch(() => ({ data: { submissions: [] } })),
+      ]);
+
+      const fetchedProblems = probRes.data.problems;
+      setProblems(fetchedProblems);
+
+      // Determine solved problems
+      const solvedSet = new Set<string>();
+      (subRes.data.submissions || []).forEach((s) => {
+        if (s.result === 'ACCEPTED') {
+          solvedSet.add(s.problemId);
+        }
+      });
+      setSolvedProblemIds(solvedSet);
+
+      // Initialize code map with buggyCode if not yet set
+      setCodeMap((prev) => {
+        const updated = { ...prev };
+        fetchedProblems.forEach((p) => {
+          if (updated[p.id] === undefined) {
+            updated[p.id] = p.buggyCode;
+          }
+        });
+        return updated;
+      });
+
+      // Select first unsolved problem or 0
+      if (fetchedProblems.length > 0) {
+        let firstUnsolvedIndex = 0;
+        for (let i = 0; i < fetchedProblems.length; i++) {
+          if (!solvedSet.has(fetchedProblems[i].id)) {
+            firstUnsolvedIndex = i;
+            break;
+          }
+        }
+        setSelectedIndex(firstUnsolvedIndex);
       }
 
       const socket = getSocket();
@@ -153,19 +195,54 @@ export default function DebuggingPage() {
     };
   }, [event, eventVersion, loadEventAndProblems, navigate]);
 
+  // ── Problem status and progression rules ──────────────────────────────────
+  function isProblemLocked(index: number): boolean {
+    if (index === 0) return false;
+    const prevProblem = problems[index - 1];
+    if (!prevProblem) return true;
+    return !solvedProblemIds.has(prevProblem.id);
+  }
+
+  function getProblemStatus(index: number): 'SOLVED' | 'ACTIVE' | 'LOCKED' | 'UNLOCKED' {
+    const prob = problems[index];
+    if (!prob) return 'LOCKED';
+    if (solvedProblemIds.has(prob.id)) {
+      return index === selectedIndex ? 'ACTIVE' : 'SOLVED';
+    }
+    if (isProblemLocked(index)) {
+      return 'LOCKED';
+    }
+    return index === selectedIndex ? 'ACTIVE' : 'UNLOCKED';
+  }
+
   function selectProblem(index: number) {
+    if (isProblemLocked(index)) return;
     setSelectedIndex(index);
-    setCode(problems[index]?.buggyCode || '');
     setRunResult(null);
     setSubmitResult(null);
   }
 
-  async function handleRun() {
-    if (!event || event.status !== 'RUNNING') return;
+  const currentProblem = problems[selectedIndex];
+  const currentCode = currentProblem ? (codeMap[currentProblem.id] ?? currentProblem.buggyCode) : '';
+
+  function handleCodeChange(newCode: string | undefined) {
+    if (!currentProblem) return;
+    setCodeMap((prev) => ({
+      ...prev,
+      [currentProblem.id]: newCode || '',
+    }));
+  }
+
+  // ── Run Sample (Local Output Testing) ────────────────────────────────────
+  async function handleRunSample() {
+    if (!event || event.status !== 'RUNNING' || !currentProblem) return;
     setRunning(true);
     setRunResult(null);
     try {
-      const res = await api.post<RunResult>(`/events/${event.id}/run-code`, { code });
+      const res = await api.post<RunResult>(`/events/${event.id}/run-code`, {
+        code: currentCode,
+        input: currentProblem.sampleInput || '',
+      });
       setRunResult(res.data);
     } catch (err: unknown) {
       setRunResult({
@@ -173,15 +250,16 @@ export default function DebuggingPage() {
         output: '',
         error:
           (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          'Execution failed or timed out (5.0s limit)',
+          'Execution failed or timed out (5.0s sandbox limit)',
       });
     } finally {
       setRunning(false);
     }
   }
 
+  // ── Submit Solution (Hidden Server Test Cases) ───────────────────────────
   async function confirmAndSubmit() {
-    if (!event || event.status !== 'RUNNING' || !problems[selectedIndex] || submitting) return;
+    if (!event || event.status !== 'RUNNING' || !currentProblem || submitting) return;
     setSubmitting(true);
     setSubmitResult(null);
     setConfirmModalOpen(false);
@@ -190,11 +268,16 @@ export default function DebuggingPage() {
       const res = await api.post<{ submission: SubmissionResult }>(
         `/events/${event.id}/submit-code`,
         {
-          problemId: problems[selectedIndex].id,
-          code,
+          problemId: currentProblem.id,
+          code: currentCode,
         }
       );
-      setSubmitResult(res.data.submission);
+      const submission = res.data.submission;
+      setSubmitResult(submission);
+
+      if (submission.result === 'ACCEPTED') {
+        setSolvedProblemIds((prev) => new Set([...prev, currentProblem.id]));
+      }
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
@@ -204,8 +287,6 @@ export default function DebuggingPage() {
       setSubmitting(false);
     }
   }
-
-  const currentProblem = problems[selectedIndex];
 
   const renderVerdictBadge = (result: SubmissionResult['result']) => {
     switch (result) {
@@ -243,6 +324,10 @@ export default function DebuggingPage() {
         return null;
     }
   };
+
+  const isCurrentSolved = currentProblem ? solvedProblemIds.has(currentProblem.id) : false;
+  const hasNextProblem = selectedIndex + 1 < problems.length;
+  const isNextUnlocked = hasNextProblem && !isProblemLocked(selectedIndex + 1);
 
   return (
     <div className={styles.page}>
@@ -289,162 +374,205 @@ export default function DebuggingPage() {
 
       {/* ── Main Layout ───────────────────────────────────────────────────── */}
       <div className={styles.layout}>
-        {/* Left Sidebar: Problem Selector */}
+        {/* ── Minimalist Problem Navigator (Left Panel) ───────────────────── */}
         <aside className={styles.sidebar}>
-          <div className={styles.sidebarTitle}>Problem Statements</div>
+          <div className={styles.sidebarHeader}>
+            <span className={styles.sidebarTitle}>PROBLEMS</span>
+            <span className={styles.solvedCountBadge}>
+              {solvedProblemIds.size}/{problems.length} SOLVED
+            </span>
+          </div>
+
           <ul className={styles.problemList}>
-            {problems.map((p, i) => (
-              <li key={p.id}>
-                <button
-                  className={`${styles.problemBtn} ${i === selectedIndex ? styles.problemBtnActive : ''}`}
-                  onClick={() => selectProblem(i)}
-                >
-                  <span className={styles.problemNum}>#{i + 1}</span>
-                  <span className={styles.problemTitleText}>{p.title}</span>
-                  <span className={styles.problemPoints}>{p.points}p</span>
-                </button>
-              </li>
-            ))}
+            {problems.map((p, i) => {
+              const status = getProblemStatus(i);
+              const locked = status === 'LOCKED';
+              const isActive = i === selectedIndex;
+              const isSolved = solvedProblemIds.has(p.id);
+
+              return (
+                <li key={p.id}>
+                  <button
+                    className={`${styles.problemBtn} ${isActive ? styles.problemBtnActive : ''} ${
+                      locked ? styles.problemBtnLocked : ''
+                    } ${isSolved ? styles.problemBtnSolved : ''}`}
+                    onClick={() => selectProblem(i)}
+                    disabled={locked}
+                    title={locked ? `Locked: Solve Problem #${i} to unlock` : p.title}
+                  >
+                    <div className={styles.problemBtnLeft}>
+                      <span className={styles.problemNum}>#{i + 1}</span>
+                      <span className={styles.problemTitleText}>{p.title}</span>
+                    </div>
+
+                    <div className={styles.problemBtnRight}>
+                      <span className={styles.problemPoints}>{p.points}p</span>
+                      {isSolved ? (
+                        <span className={styles.statusSolvedBadge} title="Passed all test cases">✓</span>
+                      ) : locked ? (
+                        <span className={styles.statusLockedBadge} title="Locked">🔒</span>
+                      ) : isActive ? (
+                        <span className={styles.statusActiveBadge} title="Currently active">●</span>
+                      ) : (
+                        <span className={styles.statusUnlockedBadge} title="Unlocked">○</span>
+                      )}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </aside>
 
-        {/* Split View */}
-        <div className={styles.mainSplit}>
-          {/* ── Left Column: Problem Details & Constraints ────────────────── */}
-          <div className={styles.problemColumn}>
-            {currentProblem ? (
-              <>
-                <div className={styles.card}>
-                  <div className={styles.problemHeader}>
-                    <h2 className={styles.problemTitle}>
-                      #{selectedIndex + 1}. {currentProblem.title}
-                    </h2>
-                    <span className={styles.pointsBadge}>{currentProblem.points} Points</span>
-                  </div>
-
-                  <p className={styles.description}>{currentProblem.description}</p>
-
-                  <div className={styles.outputBlock}>
-                    <span className={styles.sectionLabel}>Expected Output</span>
-                    <pre className={styles.codeBlock}>{currentProblem.expectedOutput}</pre>
-                  </div>
+        {/* ── Primary Full-Width Code Editor Stage ─────────────────────────── */}
+        <main className={styles.primaryStage}>
+          {currentProblem ? (
+            <div className={styles.editorWorkspace}>
+              {/* Problem Sub-Header Bar */}
+              <div className={styles.editorTopBar}>
+                <div className={styles.editorTopBarLeft}>
+                  <span className={styles.editorProblemNum}>Problem #{selectedIndex + 1}</span>
+                  <span className={styles.editorProblemTitle}>{currentProblem.title}</span>
+                  <span className={styles.editorPointsBadge}>{currentProblem.points} Points</span>
+                  {isCurrentSolved && (
+                    <span className={styles.solvedIndicatorBadge}>✓ Solved (+{currentProblem.points} pts)</span>
+                  )}
                 </div>
-
-                <div className={styles.constraintsNote}>
-                  <span>⏱</span>
-                  <span>
-                    <strong>Sandbox Execution Limit:</strong> Each execution is capped at 5.0 seconds.
-                    Infinite loops will trigger a Time Limit Exceeded verdict.
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div className={styles.card}>
-                <p>No problem selected.</p>
-              </div>
-            )}
-          </div>
-
-          {/* ── Right Column: Monaco Code Editor & Console Output ──────────── */}
-          <div className={styles.editorColumn}>
-            <div className={styles.editorCard}>
-              <div className={styles.editorHeader}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div className={styles.editorTopBarRight}>
                   <span className={styles.langBadge}>C / GCC</span>
-                  <span style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8' }}>
-                    Fix the buggy code to match expected output
-                  </span>
-                </div>
-                <div className={styles.timeoutNotice}>
-                  <span>⏱ 5.0s Timeout</span>
+                  <span className={styles.timeoutBadge}>⏱ 5.0s Timeout</span>
                 </div>
               </div>
 
+              {/* Monaco Code Editor taking full primary space */}
               <div className={styles.editorContainer}>
                 <Editor
-                  height="340px"
+                  height="100%"
                   language="c"
-                  value={code}
-                  onChange={(v) => setCode(v || '')}
+                  value={currentCode}
+                  onChange={handleCodeChange}
                   theme="vs-dark"
                   options={{
                     minimap: { enabled: false },
-                    fontSize: 13,
+                    fontSize: 14,
                     fontFamily: 'Cascadia Code, Fira Code, Consolas, monospace',
                     scrollBeyondLastLine: false,
                     wordWrap: 'on',
                     readOnly: !isEventRunning,
                     automaticLayout: true,
+                    lineNumbers: 'on',
+                    renderLineHighlight: 'all',
+                    cursorBlinking: 'smooth',
+                    tabSize: 2,
                   }}
                 />
               </div>
 
-              <div className={styles.actionBar}>
-                <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8' }}>
-                  {submitting ? 'Processing submission with test cases...' : 'Ready to test or submit'}
+              {/* ── Compact "Sample Target" & Action Bar ───────────────────── */}
+              <div className={styles.sampleTargetBar}>
+                <div className={styles.targetOutputs}>
+                  {currentProblem.sampleInput && currentProblem.sampleInput.trim() !== '' && (
+                    <div className={styles.targetItem}>
+                      <span className={styles.targetLabel}>Sample Input:</span>
+                      <code className={styles.targetValue}>{currentProblem.sampleInput}</code>
+                    </div>
+                  )}
+                  <div className={styles.targetItem}>
+                    <span className={styles.targetLabel}>Expected Output:</span>
+                    <code className={styles.targetValue}>{currentProblem.expectedOutput}</code>
+                  </div>
                 </div>
+
                 <div className={styles.actionBtnGroup}>
                   <button
-                    className={styles.runBtn}
-                    onClick={handleRun}
+                    className={styles.runSampleBtn}
+                    onClick={handleRunSample}
                     disabled={!isEventRunning || running || submitting}
+                    title="Test your code output against sample target"
                   >
-                    {running ? '▶ Running...' : '▶ Run Code'}
+                    {running ? '▶ Running Sample...' : '▶ Run Sample'}
                   </button>
                   <button
-                    className={styles.submitBtn}
+                    className={styles.submitSolutionBtn}
                     onClick={() => setConfirmModalOpen(true)}
                     disabled={!isEventRunning || submitting}
+                    title="Evaluate code against hidden server test cases"
                   >
                     {submitting ? 'Submitting...' : '✓ Submit Solution'}
                   </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Console / Terminal Results Panel */}
-            <div className={styles.consoleCard}>
-              <div className={styles.consoleHeader}>
-                <span className={styles.consoleTitle}>Console Output &amp; Verdicts</span>
-                {submitResult && renderVerdictBadge(submitResult.result)}
-              </div>
-
-              {/* Run Code Output */}
-              {runResult && (
-                <div>
-                  <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8', marginBottom: '0.25rem' }}>
-                    {runResult.success ? '✓ Preview Output (stdout):' : '✗ Execution Error (stderr):'}
-                  </div>
-                  <pre className={styles.consoleTerminal}>
-                    {runResult.output || runResult.error || '(no stdout output)'}
-                  </pre>
-                </div>
-              )}
-
-              {/* Submit Code Output */}
-              {submitResult && (
-                <div>
-                  <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8', marginBottom: '0.25rem' }}>
-                    {submitResult.result === 'ACCEPTED'
-                      ? `Passed all test cases (${submitResult.passedCases}/${submitResult.totalCases})`
-                      : `Evaluation Output (${submitResult.passedCases}/${submitResult.totalCases} test cases passed):`}
-                  </div>
-                  {(submitResult.compileOutput || submitResult.runOutput) && (
-                    <pre className={styles.consoleTerminal}>
-                      {submitResult.compileOutput || submitResult.runOutput}
-                    </pre>
+                  {isCurrentSolved && hasNextProblem && isNextUnlocked && (
+                    <button
+                      className={styles.nextProblemBtn}
+                      onClick={() => selectProblem(selectedIndex + 1)}
+                      title="Advance to next problem"
+                    >
+                      Next Problem →
+                    </button>
                   )}
                 </div>
-              )}
+              </div>
 
-              {!runResult && !submitResult && (
-                <div style={{ fontSize: 'var(--font-size-micro)', color: '#64748b', fontStyle: 'italic' }}>
-                  Run your code to test against sample outputs, or click Submit when ready.
+              {/* ── Compact Console / Terminal Output Panel ───────────────── */}
+              <div className={styles.consolePanel}>
+                <div className={styles.consoleHeader}>
+                  <div className={styles.consoleHeaderLeft}>
+                    <span className={styles.consoleTitle}>CONSOLE OUTPUT &amp; VERDICT</span>
+                    {submitResult && (
+                      <span className={styles.caseSummaryText}>
+                        ({submitResult.passedCases}/{submitResult.totalCases} hidden tests passed)
+                      </span>
+                    )}
+                  </div>
+                  <div className={styles.consoleHeaderRight}>
+                    {submitResult && renderVerdictBadge(submitResult.result)}
+                  </div>
                 </div>
-              )}
+
+                <div className={styles.consoleContent}>
+                  {/* Run Sample Output */}
+                  {runResult && (
+                    <div className={styles.outputSection}>
+                      <div className={styles.outputSectionHeader}>
+                        {runResult.success ? '✓ Preview stdout:' : '✗ Execution stderr:'}
+                      </div>
+                      <pre className={styles.consoleTerminal}>
+                        {runResult.output || runResult.error || '(no stdout output)'}
+                      </pre>
+                    </div>
+                  )}
+
+                  {/* Submit Code Output */}
+                  {submitResult && (
+                    <div className={styles.outputSection}>
+                      <div className={styles.outputSectionHeader}>
+                        {submitResult.result === 'ACCEPTED'
+                          ? `✓ Evaluation Passed (${submitResult.passedCases}/${submitResult.totalCases} test cases passed)`
+                          : `✗ Evaluation Failed (${submitResult.passedCases}/${submitResult.totalCases} test cases passed):`}
+                      </div>
+                      {(submitResult.compileOutput || submitResult.runOutput) ? (
+                        <pre className={styles.consoleTerminal}>
+                          {submitResult.compileOutput || submitResult.runOutput}
+                        </pre>
+                      ) : (
+                        <pre className={styles.consoleTerminal}>All hidden test cases passed successfully!</pre>
+                      )}
+                    </div>
+                  )}
+
+                  {!runResult && !submitResult && (
+                    <div className={styles.consolePlaceholder}>
+                      Click <strong>▶ Run Sample</strong> to verify local stdout against Expected Output, or click <strong>✓ Submit Solution</strong> to evaluate all hidden test cases.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          ) : (
+            <div className={styles.noProblemSelected}>
+              <h3>No problem selected or loaded.</h3>
+            </div>
+          )}
+        </main>
       </div>
 
       {/* ── Confirm Submit Modal ──────────────────────────────────────────── */}
@@ -452,21 +580,21 @@ export default function DebuggingPage() {
         <div className={styles.modalOverlay}>
           <div className={styles.modal}>
             <div className={styles.modalHeader}>
-              <span className={styles.modalTitle}>Confirm Submission</span>
+              <span className={styles.modalTitle}>Confirm Solution Submission</span>
               <button className={styles.modalCloseBtn} onClick={() => setConfirmModalOpen(false)}>
                 ×
               </button>
             </div>
             <div className={styles.modalBody}>
               <p>
-                Are you ready to submit your solution for{' '}
+                Submit your solution for{' '}
                 <strong>
                   Problem #{selectedIndex + 1}: {currentProblem?.title}
                 </strong>
                 ?
               </p>
               <p style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
-                Your code will be evaluated against all hidden server test cases.
+                Your code will be evaluated against all hidden server test cases. Once passed, Problem #{selectedIndex + 2} will be automatically unlocked!
               </p>
             </div>
             <div className={styles.modalFooter}>
