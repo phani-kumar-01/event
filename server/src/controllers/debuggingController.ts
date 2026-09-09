@@ -265,7 +265,9 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
   let worstVerdict: 'ACCEPTED' | 'WRONG_ANSWER' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR' = 'ACCEPTED';
   if (!isAccepted) {
     const hasTLE = allTestResults.some((t) => t.status === 'TIME_LIMIT_EXCEEDED');
-    const hasRuntime = allTestResults.some((t) => t.status === 'RUNTIME_ERROR' || t.status === 'SECURITY_VIOLATION');
+    const hasRuntime = allTestResults.some(
+      (t) => t.status === 'RUNTIME_ERROR' || t.status === 'SECURITY_VIOLATION' || t.status === 'OUTPUT_LIMIT_EXCEEDED'
+    );
     worstVerdict = hasTLE ? 'TIME_LIMIT_EXCEEDED' : hasRuntime ? 'RUNTIME_ERROR' : 'WRONG_ANSWER';
   }
 

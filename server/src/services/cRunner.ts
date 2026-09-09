@@ -1,12 +1,12 @@
 import { execFile, exec } from 'child_process';
-import fs from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
 import { performance } from 'perf_hooks';
 
 export interface ExecutionResult {
   success: boolean;
-  error: 'COMPILATION_ERROR' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR' | 'SECURITY_VIOLATION' | null;
+  error: 'COMPILATION_ERROR' | 'TIME_LIMIT_EXCEEDED' | 'OUTPUT_LIMIT_EXCEEDED' | 'RUNTIME_ERROR' | 'SECURITY_VIOLATION' | null;
   output: string;
   timeMs: number;
 }
@@ -19,13 +19,55 @@ export interface TestCase {
 export interface TestCaseEvaluation {
   name: string;
   type: 'SAMPLE' | 'HIDDEN';
-  status: 'PASSED' | 'FAILED' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR' | 'SECURITY_VIOLATION';
+  status: 'PASSED' | 'FAILED' | 'TIME_LIMIT_EXCEEDED' | 'OUTPUT_LIMIT_EXCEEDED' | 'RUNTIME_ERROR' | 'SECURITY_VIOLATION';
   timeMs: number;
   input?: string;
   expectedOutput?: string;
   actualOutput?: string;
   error?: string;
 }
+
+/**
+ * In-memory concurrency limiter (matches p-limit functionality, zero ESM overhead)
+ * Capped to 4 concurrent GCC compilations/executions to match 4 performance cores.
+ */
+export function createConcurrencyLimiter(maxConcurrency: number = 4) {
+  const queue: Array<() => void> = [];
+  let activeCount = 0;
+
+  const next = () => {
+    activeCount--;
+    if (queue.length > 0) {
+      const nextTask = queue.shift();
+      if (nextTask) nextTask();
+    }
+  };
+
+  const run = async <T>(fn: () => Promise<T>): Promise<T> => {
+    activeCount++;
+    try {
+      return await fn();
+    } finally {
+      next();
+    }
+  };
+
+  return <T>(fn: () => Promise<T>): Promise<T> => {
+    return new Promise<T>((resolve, reject) => {
+      const task = () => {
+        run(fn).then(resolve, reject);
+      };
+
+      if (activeCount < maxConcurrency) {
+        task();
+      } else {
+        queue.push(task);
+      }
+    });
+  };
+}
+
+export const cExecutionQueue = createConcurrencyLimiter(4);
 
 const DANGEROUS_PATTERNS = [
   /#include\s*<sys\/.*>/i,
@@ -54,75 +96,84 @@ export function normalizeOutput(s: string): string {
 }
 
 /**
- * Compile and run C source code securely with sandboxing, keyword checks, and hard timeouts.
+ * Compile and run C source code securely with sandboxing, keyword checks, hard timeouts, and 10KB buffer caps.
+ * Queued via cExecutionQueue to prevent CPU spikes under 60-participant load.
  */
 export function compileAndRunC(
   sourceCode: string,
   inputData: string = '',
   timeoutMs: number = 2000
 ): Promise<ExecutionResult> {
-  return new Promise((resolve) => {
+  return cExecutionQueue(async () => {
     // 1. Security Check: Block dangerous keywords
     for (const pattern of DANGEROUS_PATTERNS) {
       if (pattern.test(sourceCode)) {
-        return resolve({
+        return {
           success: false,
           error: 'SECURITY_VIOLATION',
           output: 'Security Violation: Restricted system call or header detected.',
           timeMs: 0,
-        });
+        };
       }
     }
 
-    // 2. Generate unique temp paths
-    const id = Date.now() + '_' + Math.random().toString(36).substring(7);
+    // 2. Generate unique temp paths in RAM / tmpfs
+    const id = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const tempDir = path.join(tmpdir(), 'sasi-debugging-sandbox');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
+
+    await fs.mkdir(tempDir, { recursive: true }).catch(() => {});
 
     const srcPath = path.join(tempDir, `source_${id}.c`);
     const binPath = path.join(tempDir, `exec_${id}.out`);
 
-    const cleanup = () => {
-      try { if (fs.existsSync(srcPath)) fs.unlinkSync(srcPath); } catch {}
-      try { if (fs.existsSync(binPath)) fs.unlinkSync(binPath); } catch {}
+    const cleanup = async () => {
+      await Promise.all([
+        fs.unlink(srcPath).catch(() => {}),
+        fs.unlink(binPath).catch(() => {}),
+      ]);
     };
 
     try {
-      fs.writeFileSync(srcPath, sourceCode, 'utf-8');
+      await fs.writeFile(srcPath, sourceCode, 'utf-8');
     } catch (err: unknown) {
-      cleanup();
-      return resolve({
+      await cleanup();
+      return {
         success: false,
         error: 'RUNTIME_ERROR',
         output: `Failed to write temporary source file: ${(err as Error).message}`,
         timeMs: 0,
-      });
+      };
     }
 
-    // 3. Compile Source Code
-    const compileCmd = `gcc "${srcPath}" -o "${binPath}" -lm -Wall -w`;
-    exec(compileCmd, { timeout: 10000 }, (compileErr, _stdout, stderr) => {
-      if (compileErr) {
-        cleanup();
-        return resolve({
-          success: false,
-          error: 'COMPILATION_ERROR',
-          output: stderr || compileErr.message || 'Compilation failed',
-          timeMs: 0,
-        });
-      }
+    // 3. Compile Source Code (Capped at 5.0s compilation)
+    const compileResult = await new Promise<{ error: Error | null; stderr: string }>((res) => {
+      const compileCmd = `gcc "${srcPath}" -o "${binPath}" -lm -Wall -w`;
+      exec(compileCmd, { timeout: 5000, maxBuffer: 10 * 1024 }, (err, _stdout, stderr) => {
+        res({ error: err, stderr });
+      });
+    });
 
-      // 4. Execute the binary with stdin and hard timeout
-      const startTime = performance.now();
-      let hasResolved = false;
+    if (compileResult.error) {
+      await cleanup();
+      return {
+        success: false,
+        error: 'COMPILATION_ERROR',
+        output: compileResult.stderr || compileResult.error.message || 'Compilation failed',
+        timeMs: 0,
+      };
+    }
 
-      const finish = (res: ExecutionResult) => {
-        if (!hasResolved) {
-          hasResolved = true;
-          cleanup();
-          resolve(res);
+    // 4. Execute the binary with stdin, 2.0s hard timeout, and 10KB maxBuffer
+    const startTime = performance.now();
+
+    return new Promise<ExecutionResult>((resolve) => {
+      let resolved = false;
+
+      const finish = async (result: ExecutionResult) => {
+        if (!resolved) {
+          resolved = true;
+          await cleanup();
+          resolve(result);
         }
       };
 
@@ -132,12 +183,26 @@ export function compileAndRunC(
         {
           timeout: timeoutMs,
           killSignal: 'SIGTERM',
-          maxBuffer: 1024 * 1024, // 1MB output buffer
+          maxBuffer: 10 * 1024, // 10 KB buffer cap (prevents infinite printf heap crashes)
         },
         (execErr, stdout, stderrOutput) => {
           const duration = Math.round(performance.now() - startTime);
 
           if (execErr) {
+            // Buffer overflow detection (infinite loop with printf)
+            if (
+              (execErr as any).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+              execErr.message.includes('maxBuffer')
+            ) {
+              return finish({
+                success: false,
+                error: 'OUTPUT_LIMIT_EXCEEDED',
+                output: 'Output Limit Exceeded: Output exceeded 10KB buffer capacity.',
+                timeMs: duration,
+              });
+            }
+
+            // Timeout detection
             if (execErr.killed || execErr.signal === 'SIGTERM' || duration >= timeoutMs) {
               return finish({
                 success: false,
@@ -225,6 +290,8 @@ export async function evaluateCWithTestCases(
       type,
       status: execResult.error === 'TIME_LIMIT_EXCEEDED'
         ? 'TIME_LIMIT_EXCEEDED'
+        : execResult.error === 'OUTPUT_LIMIT_EXCEEDED'
+        ? 'OUTPUT_LIMIT_EXCEEDED'
         : execResult.error === 'RUNTIME_ERROR'
         ? 'RUNTIME_ERROR'
         : isMatch
