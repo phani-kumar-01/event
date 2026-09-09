@@ -9,7 +9,6 @@ const executeSchema = z.object({
   problemId: z.union([z.string(), z.number()]),
   sourceCode: z.string().optional(),
   code: z.string().optional(),
-  userId: z.string().optional(),
   mode: z.enum(['RUN', 'SUBMIT']).default('RUN'),
 });
 
@@ -82,16 +81,49 @@ async function findProblem(problemId: string | number) {
 }
 
 /**
+ * Sanitize test case results so hidden inputs and outputs are never exposed to the client
+ */
+function sanitizeTestCases(results: TestCaseEvaluation[]): TestCaseEvaluation[] {
+  return results.map((t) => {
+    if (t.type === 'HIDDEN') {
+      return {
+        name: t.name,
+        type: 'HIDDEN',
+        status: t.status,
+        timeMs: t.timeMs,
+      };
+    }
+    return t;
+  });
+}
+
+/**
  * POST /api/debugging/execute
  * Handles both "RUN" (sample only) and "SUBMIT" (sample + hidden + persistence + sockets)
  */
 export async function executeDebuggingCode(req: AuthRequest, res: Response): Promise<void> {
   try {
+    // 1. Session & Auth Hardening: Strictly use verified req.user.userId
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized: Valid authentication token required.' });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, rollNo: true, name: true, role: true },
+    });
+
+    if (!user) {
+      res.status(401).json({ success: false, error: 'Unauthorized: User account not found in database.' });
+      return;
+    }
+
     const parsed = executeSchema.safeParse({
       problemId: req.body.problemId,
       sourceCode: req.body.sourceCode || req.body.code,
       code: req.body.code || req.body.sourceCode,
-      userId: req.body.userId,
       mode: req.body.mode || 'RUN',
     });
 
@@ -107,12 +139,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const userId = req.user?.userId || req.body.userId;
-    if (!userId) {
-      res.status(401).json({ success: false, error: 'User authentication required.' });
-      return;
-    }
-
+    // 2. Validate Problem & Event Existence
     const problem = await findProblem(problemId);
     if (!problem) {
       res.status(404).json({ success: false, error: 'Problem record not found in database.' });
@@ -138,7 +165,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           result: 'SECURITY_VIOLATION',
           error: evalResult.securityViolation,
           output: evalResult.securityViolation,
-          testCases: evalResult.results,
+          testCases: sanitizeTestCases(evalResult.results),
           timeMs: 0,
         });
         return;
@@ -165,7 +192,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
         result: evalResult.allPassed ? 'PASSED' : 'FAILED',
         output: firstOutput,
         compileOutput: '',
-        testCases: evalResult.results,
+        testCases: sanitizeTestCases(evalResult.results),
         timeMs: totalTimeMs,
         expected: sampleCases[0]?.expectedOutput || problem.expectedOutput,
       });
@@ -176,28 +203,47 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
     const antiCheat = detectHardcodingTricks(sourceCode, sampleCases, hiddenCases);
     if (antiCheat.isCheat) {
       const totalCases = sampleCases.length + hiddenCases.length;
-      const submission = await prisma.submission.create({
-        data: {
-          userId,
-          eventId: event.id,
-          problemId: problem.id,
-          submittedCode: sourceCode,
-          result: 'WRONG_ANSWER',
-          compileOutput: '',
-          runOutput: `Validation Flag: ${antiCheat.reason}`,
-          pointsAwarded: 0,
-        },
+
+      const existingSubmission = await prisma.submission.findFirst({
+        where: { userId, problemId: problem.id },
       });
+
+      let submission;
+      if (existingSubmission) {
+        submission = await prisma.submission.update({
+          where: { id: existingSubmission.id },
+          data: {
+            submittedCode: sourceCode,
+            result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'WRONG_ANSWER',
+            compileOutput: '',
+            runOutput: `Validation Flag: ${antiCheat.reason}`,
+            submittedAt: new Date(),
+          },
+        });
+      } else {
+        submission = await prisma.submission.create({
+          data: {
+            userId,
+            eventId: event.id,
+            problemId: problem.id,
+            submittedCode: sourceCode,
+            result: 'WRONG_ANSWER',
+            compileOutput: '',
+            runOutput: `Validation Flag: ${antiCheat.reason}`,
+            pointsAwarded: 0,
+          },
+        });
+      }
 
       res.status(400).json({
         success: false,
         error: `Submission Flagged: ${antiCheat.reason}`,
         submission: {
           id: submission.id,
-          result: 'WRONG_ANSWER',
+          result: submission.result,
           compileOutput: '',
           runOutput: `Validation Flag: ${antiCheat.reason}`,
-          pointsAwarded: 0,
+          pointsAwarded: submission.pointsAwarded,
           passedCases: 0,
           totalCases,
           testCases: [
@@ -206,7 +252,6 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
               type: 'HIDDEN',
               status: 'FAILED',
               timeMs: 0,
-              error: antiCheat.reason,
             },
           ],
           submittedAt: submission.submittedAt.toISOString(),
@@ -219,31 +264,46 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
     const sampleEval = await evaluateCWithTestCases(sourceCode, sampleCases, 'SAMPLE', timeoutMs);
 
     if (sampleEval.securityViolation) {
-      const submission = await prisma.submission.create({
-        data: {
-          userId,
-          eventId: event.id,
-          problemId: problem.id,
-          submittedCode: sourceCode,
-          result: 'RUNTIME_ERROR',
-          compileOutput: '',
-          runOutput: sampleEval.securityViolation,
-          pointsAwarded: 0,
-        },
+      const existingSubmission = await prisma.submission.findFirst({
+        where: { userId, problemId: problem.id },
       });
+
+      const submission = existingSubmission
+        ? await prisma.submission.update({
+            where: { id: existingSubmission.id },
+            data: {
+              submittedCode: sourceCode,
+              result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'RUNTIME_ERROR',
+              compileOutput: '',
+              runOutput: sampleEval.securityViolation,
+              submittedAt: new Date(),
+            },
+          })
+        : await prisma.submission.create({
+            data: {
+              userId,
+              eventId: event.id,
+              problemId: problem.id,
+              submittedCode: sourceCode,
+              result: 'RUNTIME_ERROR',
+              compileOutput: '',
+              runOutput: sampleEval.securityViolation,
+              pointsAwarded: 0,
+            },
+          });
 
       res.status(400).json({
         success: false,
         error: `Security Violation: ${sampleEval.securityViolation}`,
         submission: {
           id: submission.id,
-          result: 'RUNTIME_ERROR',
+          result: submission.result,
           compileOutput: '',
           runOutput: sampleEval.securityViolation,
-          pointsAwarded: 0,
+          pointsAwarded: submission.pointsAwarded,
           passedCases: 0,
           totalCases: sampleCases.length + hiddenCases.length,
-          testCases: sampleEval.results,
+          testCases: sanitizeTestCases(sampleEval.results),
           submittedAt: submission.submittedAt.toISOString(),
         },
       });
@@ -251,28 +311,43 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
     }
 
     if (sampleEval.compileError) {
-      const submission = await prisma.submission.create({
-        data: {
-          userId,
-          eventId: event.id,
-          problemId: problem.id,
-          submittedCode: sourceCode,
-          result: 'COMPILE_ERROR',
-          compileOutput: sampleEval.compileError,
-          runOutput: '',
-          pointsAwarded: 0,
-        },
+      const existingSubmission = await prisma.submission.findFirst({
+        where: { userId, problemId: problem.id },
       });
+
+      const submission = existingSubmission
+        ? await prisma.submission.update({
+            where: { id: existingSubmission.id },
+            data: {
+              submittedCode: sourceCode,
+              result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'COMPILE_ERROR',
+              compileOutput: sampleEval.compileError,
+              runOutput: '',
+              submittedAt: new Date(),
+            },
+          })
+        : await prisma.submission.create({
+            data: {
+              userId,
+              eventId: event.id,
+              problemId: problem.id,
+              submittedCode: sourceCode,
+              result: 'COMPILE_ERROR',
+              compileOutput: sampleEval.compileError,
+              runOutput: '',
+              pointsAwarded: 0,
+            },
+          });
 
       res.status(400).json({
         success: false,
         error: `Compilation Error: ${sampleEval.compileError}`,
         submission: {
           id: submission.id,
-          result: 'COMPILE_ERROR',
+          result: submission.result,
           compileOutput: sampleEval.compileError,
           runOutput: '',
-          pointsAwarded: 0,
+          pointsAwarded: submission.pointsAwarded,
           passedCases: 0,
           totalCases: sampleCases.length + hiddenCases.length,
           testCases: [],
@@ -315,7 +390,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           errorMessage = 'Execution timed out (2.0s Sandbox Limit). Check for infinite loops.';
         } else if (firstFailed.status === 'OUTPUT_LIMIT_EXCEEDED') {
           errorMessage = 'Output limit exceeded (10KB Max).';
-        } else if (firstFailed.expectedOutput !== undefined && firstFailed.actualOutput !== undefined) {
+        } else if (firstFailed.type === 'SAMPLE' && firstFailed.expectedOutput !== undefined && firstFailed.actualOutput !== undefined) {
           errorMessage = `Output Mismatch: Expected "${firstFailed.expectedOutput}", Got "${normalizeOutput(firstFailed.actualOutput)}"`;
         } else {
           errorMessage = firstFailed.error || `Test case failed (${passedCases}/${totalCases} passed)`;
@@ -323,24 +398,40 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       }
     }
 
-    const existingAccepted = await prisma.submission.findFirst({
-      where: { userId, problemId: problem.id, result: 'ACCEPTED' },
+    const existingSubmission = await prisma.submission.findFirst({
+      where: { userId, problemId: problem.id },
     });
 
-    const pointsAwarded = isAccepted && !existingAccepted ? problem.points : 0;
+    const isAlreadyAccepted = existingSubmission?.result === 'ACCEPTED';
+    const pointsAwarded = isAccepted ? problem.points : (isAlreadyAccepted ? existingSubmission.pointsAwarded : 0);
 
-    const submission = await prisma.submission.create({
-      data: {
-        userId,
-        eventId: event.id,
-        problemId: problem.id,
-        submittedCode: sourceCode,
-        result: isAccepted ? 'ACCEPTED' : worstVerdict,
-        compileOutput: '',
-        runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
-        pointsAwarded,
-      },
-    });
+    let submission;
+    if (existingSubmission) {
+      submission = await prisma.submission.update({
+        where: { id: existingSubmission.id },
+        data: {
+          submittedCode: sourceCode,
+          result: isAccepted ? 'ACCEPTED' : (isAlreadyAccepted ? 'ACCEPTED' : worstVerdict),
+          compileOutput: '',
+          runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
+          pointsAwarded: Math.max(existingSubmission.pointsAwarded, pointsAwarded),
+          submittedAt: new Date(),
+        },
+      });
+    } else {
+      submission = await prisma.submission.create({
+        data: {
+          userId,
+          eventId: event.id,
+          problemId: problem.id,
+          submittedCode: sourceCode,
+          result: isAccepted ? 'ACCEPTED' : worstVerdict,
+          compileOutput: '',
+          runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
+          pointsAwarded,
+        },
+      });
+    }
 
     let nextProblem = null;
     if (isAccepted) {
@@ -370,6 +461,8 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       }
     }
 
+    const sanitizedResults = sanitizeTestCases(allTestResults);
+
     if (!isAccepted) {
       res.status(400).json({
         success: false,
@@ -382,7 +475,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           pointsAwarded: submission.pointsAwarded,
           passedCases,
           totalCases,
-          testCases: allTestResults,
+          testCases: sanitizedResults,
           submittedAt: submission.submittedAt.toISOString(),
         },
       });
@@ -402,7 +495,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
         pointsAwarded: submission.pointsAwarded,
         passedCases,
         totalCases,
-        testCases: allTestResults,
+        testCases: sanitizedResults,
         nextProblemId: nextProblem?.id,
         submittedAt: submission.submittedAt.toISOString(),
       },

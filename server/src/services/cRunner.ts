@@ -2,6 +2,7 @@ import { execFile, exec } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
 import { performance } from 'perf_hooks';
 
 export interface ExecutionResult {
@@ -73,6 +74,11 @@ const DANGEROUS_PATTERNS = [
   /#include\s*<sys\/.*>/i,
   /#include\s*<windows\.h>/i,
   /#include\s*<unistd\.h>/i,
+  /#include\s*<process\.h>/i,
+  /#include\s*<fstream>/i,
+  /#include\s*<dirent\.h>/i,
+  /#include\s*<signal\.h>/i,
+  /#include\s*<pthread\.h>/i,
   /\bsystem\s*\(/i,
   /\bfork\s*\(/i,
   /\bexec[lvpe]*\s*\(/i,
@@ -83,7 +89,12 @@ const DANGEROUS_PATTERNS = [
   /\bsetgid\s*\(/i,
   /\bchmod\s*\(/i,
   /\bremove\s*\(/i,
+  /\brename\s*\(/i,
   /\bunlink\s*\(/i,
+  /\bmkdir\s*\(/i,
+  /\brmdir\s*\(/i,
+  /\btruncate\s*\(/i,
+  /\bchown\s*\(/i,
 ];
 
 export function normalizeOutput(s: string): string {
@@ -117,8 +128,8 @@ export function compileAndRunC(
       }
     }
 
-    // 2. Generate unique temp paths in RAM / tmpfs
-    const id = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    // 2. Generate unique temp paths in RAM / tmpfs using crypto.randomUUID()
+    const id = randomUUID();
     const tempDir = path.join(tmpdir(), 'sasi-debugging-sandbox');
 
     await fs.mkdir(tempDir, { recursive: true }).catch(() => {});

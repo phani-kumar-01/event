@@ -1067,27 +1067,38 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
     });
 
     if (qualifications.length > 0) {
-      quizScores = qualifications.map((q) => ({
-        id: q.id,
-        userId: q.userId,
-        rollNo: q.user.rollNo,
-        name: q.user.name,
-        round1Score: q.round1Score,
-        round1Rank: q.round1Rank,
-        round1Time: q.round1Time,
-        round2Score: q.round2Score,
-        round2Rank: q.round2Rank,
-        round2Time: q.round2Time,
-        finalScore: q.finalScore || q.round1Score,
-        finalRank: q.finalRank,
-        isQualified: q.isQualified,
-        totalPoints: q.finalScore || q.round1Score,
-      }));
+      quizScores = qualifications
+        .map((q) => ({
+          id: q.id,
+          userId: q.userId,
+          rollNo: q.user.rollNo,
+          name: q.user.name,
+          round1Score: q.round1Score,
+          round1Rank: q.round1Rank,
+          round1Time: q.round1Time,
+          round2Score: q.round2Score,
+          round2Rank: q.round2Rank,
+          round2Time: q.round2Time,
+          finalScore: q.finalScore || q.round1Score,
+          finalRank: q.finalRank,
+          isQualified: q.isQualified,
+          totalPoints: q.finalScore || q.round1Score,
+          updatedAt: q.updatedAt,
+        }))
+        .sort(
+          (a, b) =>
+            b.totalPoints - a.totalPoints ||
+            a.round1Time - b.round1Time ||
+            new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime() ||
+            a.rollNo.localeCompare(b.rollNo)
+        )
+        .map((item, idx) => ({ ...item, rank: idx + 1 }));
     } else {
       const answers = await prisma.answer.groupBy({
         by: ['userId'],
         where: { eventId: quizEvent.id },
         _sum: { pointsAwarded: true, timeTakenSeconds: true },
+        _max: { updatedAt: true },
         _count: { id: true },
       });
 
@@ -1115,13 +1126,21 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
             finalRank: 0,
             isQualified: false,
             totalPoints: a._sum.pointsAwarded ?? 0,
+            lastUpdatedAt: a._max.updatedAt ? new Date(a._max.updatedAt).getTime() : 0,
           };
         })
-        .sort((a, b) => b.totalPoints - a.totalPoints || a.round1Time - b.round1Time)
+        .sort(
+          (a, b) =>
+            b.totalPoints - a.totalPoints ||
+            a.round1Time - b.round1Time ||
+            a.lastUpdatedAt - b.lastUpdatedAt ||
+            a.rollNo.localeCompare(b.rollNo)
+        )
         .map((item, idx) => ({
           ...item,
           round1Rank: idx + 1,
           finalRank: idx + 1,
+          rank: idx + 1,
           isQualified: idx < 10,
         }));
     }
@@ -1145,6 +1164,7 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
         name: string;
         totalPoints: number;
         problemsSolved: number;
+        lastSolvedTime: number;
         solvedProblemIds: Set<string>;
       }
     > = {};
@@ -1157,6 +1177,7 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
           name: s.user.name,
           totalPoints: 0,
           problemsSolved: 0,
+          lastSolvedTime: 0,
           solvedProblemIds: new Set<string>(),
         };
       }
@@ -1164,6 +1185,7 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
         userMap[s.userId].solvedProblemIds.add(s.problemId);
         userMap[s.userId].totalPoints += s.pointsAwarded;
         userMap[s.userId].problemsSolved += 1;
+        userMap[s.userId].lastSolvedTime = new Date(s.submittedAt).getTime();
       }
     });
 
@@ -1175,8 +1197,15 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
         name: u.name,
         totalPoints: u.totalPoints,
         problemsSolved: u.problemsSolved,
+        lastSolvedTime: u.lastSolvedTime,
       }))
-      .sort((a, b) => b.totalPoints - a.totalPoints || b.problemsSolved - a.problemsSolved)
+      .sort(
+        (a, b) =>
+          b.totalPoints - a.totalPoints ||
+          b.problemsSolved - a.problemsSolved ||
+          a.lastSolvedTime - b.lastSolvedTime ||
+          a.rollNo.localeCompare(b.rollNo)
+      )
       .map((item, idx) => ({ ...item, rank: idx + 1 }));
   }
 
@@ -1221,7 +1250,13 @@ router.get('/leaderboard', requireAdmin, async (_req: AuthRequest, res: Response
   });
 
   const masterScores = Object.values(masterScoresMap)
-    .sort((a, b) => b.totalPoints - a.totalPoints)
+    .sort(
+      (a, b) =>
+        b.totalPoints - a.totalPoints ||
+        b.quizPoints - a.quizPoints ||
+        b.debuggingPoints - a.debuggingPoints ||
+        a.rollNo.localeCompare(b.rollNo)
+    )
     .map((item, idx) => ({ ...item, rank: idx + 1, id: item.userId }));
 
   res.json({
