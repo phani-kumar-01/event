@@ -31,41 +31,71 @@ router.get('/current-event', requireAuth, async (req: AuthRequest, res: Response
   // Check if current user is qualified for Round 2 if in Technical Quiz
   let isQualifiedForRound2 = false;
   let qualification = null;
+  let hasQualifications = false;
+  let isLocked = false;
+  let lockReason: string | undefined = undefined;
+
   if (event.type === 'TECHNICAL_QUIZ') {
+    const qualCount = await prisma.quizQualification.count({
+      where: { eventId: event.id },
+    });
+    hasQualifications = qualCount > 0;
+
     qualification = await prisma.quizQualification.findUnique({
       where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
     });
     isQualifiedForRound2 = !!qualification?.isQualified;
+
+    // Once round1Status is FINISHED and qualify-round1 has run:
+    // users where isQualified is false or missing get locked: true, reason: "not_qualified"
+    if (event.round1Status === 'FINISHED' && hasQualifications && !isQualifiedForRound2) {
+      isLocked = true;
+      lockReason = 'not_qualified';
+    }
+  }
+
+  const eventPayload = {
+    id: event.id,
+    type: event.type,
+    name: event.name,
+    status: event.status,
+    startTime: event.startTime.toISOString(),
+    endTime: event.endTime.toISOString(),
+    version: event.version,
+    currentRound: event.currentRound || 1,
+    round1Status: event.round1Status || 'DRAFT',
+    round2Status: event.round2Status || 'DRAFT',
+    round1Duration: event.round1Duration || 1800,
+    round2Duration: event.round2Duration || 1200,
+    qualifierCount: event.qualifierCount || 10,
+    isQualifiedForRound2,
+    locked: isLocked,
+    reason: lockReason,
+    hasQualifications,
+    qualification: qualification
+      ? {
+          isQualified: qualification.isQualified,
+          round1Score: qualification.round1Score,
+          round1Rank: qualification.round1Rank,
+          round2Score: qualification.round2Score,
+          finalScore: qualification.finalScore,
+          finalRank: qualification.finalRank,
+        }
+      : null,
+    serverTime: new Date().toISOString(),
+  };
+
+  if (isLocked) {
+    res.json({
+      locked: true,
+      reason: lockReason,
+      event: eventPayload,
+    });
+    return;
   }
 
   res.json({
-    event: {
-      id: event.id,
-      type: event.type,
-      name: event.name,
-      status: event.status,
-      startTime: event.startTime.toISOString(),
-      endTime: event.endTime.toISOString(),
-      version: event.version,
-      currentRound: event.currentRound || 1,
-      round1Status: event.round1Status || 'DRAFT',
-      round2Status: event.round2Status || 'DRAFT',
-      round1Duration: event.round1Duration || 1800,
-      round2Duration: event.round2Duration || 1200,
-      qualifierCount: event.qualifierCount || 10,
-      isQualifiedForRound2,
-      qualification: qualification
-        ? {
-            isQualified: qualification.isQualified,
-            round1Score: qualification.round1Score,
-            round1Rank: qualification.round1Rank,
-            round2Score: qualification.round2Score,
-            finalScore: qualification.finalScore,
-            finalRank: qualification.finalRank,
-          }
-        : null,
-      serverTime: new Date().toISOString(),
-    },
+    event: eventPayload,
   });
 });
 
@@ -78,30 +108,69 @@ router.get('/events/:id', requireAuth, async (req: AuthRequest, res: Response): 
   }
 
   let isQualifiedForRound2 = false;
+  let qualification = null;
+  let hasQualifications = false;
+  let isLocked = false;
+  let lockReason: string | undefined = undefined;
+
   if (event.type === 'TECHNICAL_QUIZ') {
-    const qual = await prisma.quizQualification.findUnique({
+    const qualCount = await prisma.quizQualification.count({
+      where: { eventId: event.id },
+    });
+    hasQualifications = qualCount > 0;
+
+    qualification = await prisma.quizQualification.findUnique({
       where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
     });
-    isQualifiedForRound2 = !!qual?.isQualified;
+    isQualifiedForRound2 = !!qualification?.isQualified;
+
+    if (event.round1Status === 'FINISHED' && hasQualifications && !isQualifiedForRound2) {
+      isLocked = true;
+      lockReason = 'not_qualified';
+    }
+  }
+
+  const eventPayload = {
+    id: event.id,
+    type: event.type,
+    name: event.name,
+    status: event.status,
+    startTime: event.startTime.toISOString(),
+    endTime: event.endTime.toISOString(),
+    version: event.version,
+    currentRound: event.currentRound || 1,
+    round1Status: event.round1Status || 'DRAFT',
+    round2Status: event.round2Status || 'DRAFT',
+    round1Duration: event.round1Duration || 1800,
+    round2Duration: event.round2Duration || 1200,
+    isQualifiedForRound2,
+    locked: isLocked,
+    reason: lockReason,
+    hasQualifications,
+    qualification: qualification
+      ? {
+          isQualified: qualification.isQualified,
+          round1Score: qualification.round1Score,
+          round1Rank: qualification.round1Rank,
+          round2Score: qualification.round2Score,
+          finalScore: qualification.finalScore,
+          finalRank: qualification.finalRank,
+        }
+      : null,
+    serverTime: new Date().toISOString(),
+  };
+
+  if (isLocked) {
+    res.json({
+      locked: true,
+      reason: lockReason,
+      event: eventPayload,
+    });
+    return;
   }
 
   res.json({
-    event: {
-      id: event.id,
-      type: event.type,
-      name: event.name,
-      status: event.status,
-      startTime: event.startTime.toISOString(),
-      endTime: event.endTime.toISOString(),
-      version: event.version,
-      currentRound: event.currentRound || 1,
-      round1Status: event.round1Status || 'DRAFT',
-      round2Status: event.round2Status || 'DRAFT',
-      round1Duration: event.round1Duration || 1800,
-      round2Duration: event.round2Duration || 1200,
-      isQualifiedForRound2,
-      serverTime: new Date().toISOString(),
-    },
+    event: eventPayload,
   });
 });
 
@@ -117,6 +186,54 @@ router.get(
     }
 
     const round = Number(req.query.round) || event.currentRound || 1;
+
+    // Check qualification for Round 2
+    let isQualified = false;
+    let qualification = null;
+    const qualCount = await prisma.quizQualification.count({
+      where: { eventId: event.id },
+    });
+    const hasQualifications = qualCount > 0;
+
+    if (hasQualifications) {
+      qualification = await prisma.quizQualification.findUnique({
+        where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
+      });
+      isQualified = !!qualification?.isQualified;
+    }
+
+    // Once round1Status is FINISHED and qualify-round1 has run:
+    // users where isQualified is false or missing get locked: true, reason: "not_qualified" response
+    if (round === 2) {
+      if (event.round1Status === 'FINISHED' && hasQualifications && !isQualified) {
+        res.json({
+          locked: true,
+          reason: 'not_qualified',
+          round: 2,
+          challenges: [],
+        });
+        return;
+      }
+      if (!isQualified && hasQualifications) {
+        res.json({
+          locked: true,
+          reason: 'not_qualified',
+          round: 2,
+          challenges: [],
+        });
+        return;
+      }
+
+      // Qualified users get round-2 content once round2Status is RUNNING
+      if (event.round2Status !== 'RUNNING') {
+        res.json({
+          round: 2,
+          challenges: [],
+          message: 'Round 2 is not currently running',
+        });
+        return;
+      }
+    }
 
     // Fetch challenges for this round
     const challenges = await prisma.quizChallenge.findMany({
@@ -191,13 +308,45 @@ router.get(
     const round = Number(req.query.round) || event.currentRound || 1;
     const challengeId = req.query.challengeId ? String(req.query.challengeId) : undefined;
 
-    // If student is in Round 2, ensure they are qualified
+    // If student requests Round 2 content:
     if (round === 2) {
+      const qualCount = await prisma.quizQualification.count({
+        where: { eventId: event.id },
+      });
+      const hasQualifications = qualCount > 0;
+
       const qual = await prisma.quizQualification.findUnique({
         where: { eventId_userId: { eventId: event.id, userId: req.user!.userId } },
       });
+
+      // Once round1Status is FINISHED and qualify-round1 has run:
+      // users where isQualified is false or missing get a locked: true, reason: "not_qualified" response
+      if (event.round1Status === 'FINISHED' && hasQualifications && (!qual || !qual.isQualified)) {
+        res.status(403).json({
+          locked: true,
+          reason: 'not_qualified',
+          error: 'You are not qualified for Round 2',
+          questions: [],
+        });
+        return;
+      }
+
       if (!qual || !qual.isQualified) {
-        res.status(403).json({ error: 'You are not qualified for Round 2' });
+        res.status(403).json({
+          locked: true,
+          reason: 'not_qualified',
+          error: 'You are not qualified for Round 2',
+          questions: [],
+        });
+        return;
+      }
+
+      // Qualified users get round-2 content once round2Status is RUNNING
+      if (event.round2Status !== 'RUNNING') {
+        res.json({
+          questions: [],
+          message: 'Round 2 is not currently running',
+        });
         return;
       }
     }
@@ -317,6 +466,20 @@ router.post(
       return;
     }
 
+    if (challenge.round === 2) {
+      const qual = await prisma.quizQualification.findUnique({
+        where: { eventId_userId: { eventId, userId } },
+      });
+      if (!qual || !qual.isQualified) {
+        res.status(403).json({ locked: true, reason: 'not_qualified', error: 'You are not qualified for Round 2' });
+        return;
+      }
+      if (event.round2Status !== 'RUNNING') {
+        res.status(409).json({ error: 'Round 2 is not currently running' });
+        return;
+      }
+    }
+
     // Calculate score for puzzle
     let pointsAwarded = 0;
     if (isSolved) {
@@ -404,7 +567,11 @@ router.post(
         where: { eventId_userId: { eventId, userId } },
       });
       if (!qual || !qual.isQualified) {
-        res.status(403).json({ error: 'You are not qualified for Round 2' });
+        res.status(403).json({ locked: true, reason: 'not_qualified', error: 'You are not qualified for Round 2' });
+        return;
+      }
+      if (event.round2Status !== 'RUNNING') {
+        res.status(409).json({ error: 'Round 2 is not currently running' });
         return;
       }
     }

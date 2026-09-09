@@ -9,16 +9,42 @@ type EventType = 'DEBUGGING' | 'TECHNICAL_QUIZ';
  * Returns null if no event is currently scheduled to be running.
  */
 export async function getCurrentEvent(): Promise<Event | null> {
-  const now = new Date();
-
-  // Find the event whose time window includes now and is in a runnable state
-  const event = await prisma.event.findFirst({
+  // 1. Prioritize currently RUNNING or PAUSED event
+  let event = await prisma.event.findFirst({
     where: {
-      status: { in: ['RUNNING', 'PAUSED', 'READY'] },
+      status: { in: ['RUNNING', 'PAUSED'] },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (event) return event;
+
+  // 2. Look for an event that is READY
+  event = await prisma.event.findFirst({
+    where: {
+      status: 'READY',
     },
     orderBy: { startTime: 'asc' },
   });
+  if (event) return event;
 
+  // 3. Look for a Technical Quiz event in intermission (Round 1 finished, Round 2 not finished yet)
+  event = await prisma.event.findFirst({
+    where: {
+      type: 'TECHNICAL_QUIZ',
+      round1Status: 'FINISHED',
+      round2Status: { not: 'FINISHED' },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (event) return event;
+
+  // 4. Look for the most recent event (e.g. FINISHED or DRAFT)
+  event = await prisma.event.findFirst({
+    where: {
+      status: { in: ['FINISHED', 'DRAFT'] },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
   return event;
 }
 

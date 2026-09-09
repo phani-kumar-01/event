@@ -88,6 +88,44 @@ export function emitEventStateChanged(
 }
 
 /**
+ * Emit round state change specifically to event room and admin.
+ */
+export function emitEventRoundChanged(
+  io: Server,
+  event: {
+    id: string;
+    type: string;
+    name: string;
+    status: string;
+    startTime: Date;
+    endTime: Date;
+    version: number;
+    currentRound?: number;
+    round1Status?: string;
+    round2Status?: string;
+  }
+): void {
+  const payload = {
+    eventId: event.id,
+    type: event.type,
+    name: event.name,
+    status: event.status,
+    currentRound: event.currentRound || 1,
+    round1Status: event.round1Status || 'DRAFT',
+    round2Status: event.round2Status || 'DRAFT',
+    startTime: event.startTime.toISOString(),
+    endTime: event.endTime.toISOString(),
+    version: event.version,
+    serverTime: new Date().toISOString(),
+  };
+
+  io.to(`event:${event.id}`).emit('event.round_changed', payload);
+  io.to(`event:${event.id}`).emit('event.state_changed', payload);
+  io.to('admin').emit('event.round_changed', payload);
+  io.to('admin').emit('event.state_changed', payload);
+}
+
+/**
  * Emit theme update to all connected clients.
  */
 export function emitThemeUpdated(

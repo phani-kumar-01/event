@@ -1,5 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../state/AuthContext';
 import { useConnectionStatus } from '../hooks/useConnectionStatus';
 import { useTimer } from '../hooks/useTimer';
@@ -8,7 +7,7 @@ import api from '../services/api';
 import ConnectionBadge from '../components/ConnectionBadge';
 import styles from './AdminPage.module.css';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface Event {
   id: string;
@@ -21,79 +20,61 @@ interface Event {
   currentRound?: number;
   round1Status?: string;
   round2Status?: string;
-  round1Duration?: number;
-  round2Duration?: number;
-  round1Weight?: number;
-  round2Weight?: number;
-  qualifierCount?: number;
-  maxParticipants?: number;
   version: number;
 }
 
 interface DebuggingProblem {
   id: string;
-  eventId: string;
   title: string;
   description: string;
   buggyCode: string;
   expectedOutput: string;
-  testCases: Array<{ input: string; expectedOutput: string }>;
   points: number;
   timeLimit: number;
-  order: number;
+  testCases?: Array<{ input: string; expectedOutput: string }>;
+  eventId?: string;
 }
 
 interface QuizChallenge {
   id: string;
-  eventId: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
   round: number;
   type: string;
-  title: string;
-  subtitle: string;
-  description: string;
-  order: number;
   points: number;
-  timeLimit: number;
-  config: string;
   isActive: boolean;
-  isLocked: boolean;
-  _count?: { questions: number };
+  orderIndex?: number;
 }
 
 interface QuizQuestion {
   id: string;
-  eventId: string;
   challengeId?: string | null;
   round: number;
   category: string;
   type: string;
   question: string;
   imageUrl?: string;
-  optionA: string;
-  optionB: string;
-  optionC: string;
-  optionD: string;
+  optionA?: string;
+  optionB?: string;
+  optionC?: string;
+  optionD?: string;
   correctAnswer: string;
-  explanation: string;
   points: number;
-  order: number;
-  challenge?: { title: string; type: string };
+  explanation?: string;
 }
 
 interface Qualification {
   id: string;
-  eventId: string;
-  userId: string;
-  round1Score: number;
   round1Rank: number;
+  round1Score: number;
   round1Time: number;
-  isQualified: boolean;
   round2Score: number;
-  round2Rank: number;
   round2Time: number;
-  finalScore: number;
-  finalRank: number;
-  user: { id: string; rollNo: string; name: string };
+  finalRank?: number;
+  finalScore?: number;
+  isQualified: boolean;
+  user: { rollNo: string; name: string };
 }
 
 interface Student {
@@ -109,1546 +90,1379 @@ interface Theme {
   primaryColor: string;
   secondaryColor: string;
   accentColor: string;
-  backgroundColor: string;
-  surfaceColor: string;
-  textColor: string;
+  surfaceColor?: string;
+  backgroundColor?: string;
   isActive: boolean;
 }
 
-type Tab = 'dashboard' | 'events' | 'debugging' | 'quiz_hub' | 'students' | 'results' | 'appearance';
-type QuizSubTab = 'challenges' | 'questions' | 'round1_qualifiers' | 'final_rankings';
-
-// ─── Event Card with Timers ───────────────────────────────────────────────────
-
-function EventCard({
-  event,
-  onAction,
-}: {
-  event: Event;
-  onAction: (id: string, action: string, body?: Record<string, unknown>) => void;
-}) {
-  const { formatted, remaining } = useTimer(event.status === 'RUNNING' ? event.endTime : null);
-
-  const statusColors: Record<string, string> = {
-    DRAFT: styles.statusDraft,
-    READY: styles.statusReady,
-    RUNNING: styles.statusRunning,
-    PAUSED: styles.statusPaused,
-    FINISHED: styles.statusFinished,
-  };
-
-  const isQuiz = event.type === 'TECHNICAL_QUIZ';
-
-  return (
-    <div
-      className={`${styles.eventCard} ${
-        event.type === 'DEBUGGING' ? styles.eventCardDebug : styles.eventCardQuiz
-      }`}
-    >
-      <div className={styles.eventCardHeader}>
-        <div>
-          <h3 className={styles.eventCardName}>{event.name}</h3>
-          <div className={styles.eventCardType}>
-            {event.type.replace('_', ' ')}
-            {isQuiz && (
-              <span className={styles.roundTag}>
-                {event.currentRound === 2 ? 'Round 2: Top 10' : 'Round 1: 60 Students'}
-              </span>
-            )}
-          </div>
-        </div>
-        <span className={`${styles.statusBadge} ${statusColors[event.status]}`}>{event.status}</span>
-      </div>
-
-      <div className={styles.eventCardBody}>
-        <div className={styles.eventInfo}>
-          <span>Start: {new Date(event.startTime).toLocaleTimeString()}</span>
-          <span>End: {new Date(event.endTime).toLocaleTimeString()}</span>
-        </div>
-        {event.status === 'RUNNING' && (
-          <div className={`${styles.eventTimer} ${remaining < 300 ? styles.eventTimerWarn : ''}`}>
-            ⏱ {formatted}
-          </div>
-        )}
-        {event.status === 'PAUSED' && <div className={styles.eventTimerPaused}>⏸ PAUSED</div>}
-      </div>
-
-      <div className={styles.eventCardActions}>
-        {!isQuiz ? (
-          /* Debugging Controls */
-          <>
-            {event.status === 'DRAFT' && (
-              <button className={styles.btnReady} onClick={() => onAction(event.id, 'ready')}>
-                Ready
-              </button>
-            )}
-            {event.status === 'READY' && (
-              <button className={styles.btnStart} onClick={() => onAction(event.id, 'start')}>
-                ▶ Start Debugging
-              </button>
-            )}
-            {event.status === 'RUNNING' && (
-              <>
-                <button className={styles.btnPause} onClick={() => onAction(event.id, 'pause')}>
-                  ⏸ Pause
-                </button>
-                <button
-                  className={styles.btnEnd}
-                  onClick={() => {
-                    if (confirm('End this event?')) onAction(event.id, 'end');
-                  }}
-                >
-                  ■ End
-                </button>
-              </>
-            )}
-            {event.status === 'PAUSED' && (
-              <>
-                <button className={styles.btnResume} onClick={() => onAction(event.id, 'resume')}>
-                  ▶ Resume
-                </button>
-                <button
-                  className={styles.btnEnd}
-                  onClick={() => {
-                    if (confirm('End this event?')) onAction(event.id, 'end');
-                  }}
-                >
-                  ■ End
-                </button>
-              </>
-            )}
-            {event.status === 'FINISHED' && (
-              <button className={styles.btnReady} onClick={() => onAction(event.id, 'ready')}>
-                ↺ Reset to Ready
-              </button>
-            )}
-          </>
-        ) : (
-          /* Technical Quiz 2-Round Dedicated Controls */
-          <div className={styles.quizControls}>
-            {/* Round 1 Flow */}
-            <div className={styles.roundControlGroup}>
-              <div className={styles.roundControlLabel}>
-                Round 1 (60 Students) — <strong>{event.round1Status || 'READY'}</strong>
-              </div>
-              <div className={styles.btnRow}>
-                {event.round1Status !== 'RUNNING' && event.round1Status !== 'FINISHED' && (
-                  <button
-                    className={styles.btnStart}
-                    onClick={() => onAction(event.id, 'start-round1')}
-                  >
-                    ▶ Start Round 1
-                  </button>
-                )}
-                {event.round1Status === 'RUNNING' && (
-                  <>
-                    <button
-                      className={styles.btnPause}
-                      onClick={() => onAction(event.id, 'pause-round1')}
-                    >
-                      ⏸ Pause
-                    </button>
-                    <button
-                      className={styles.btnEnd}
-                      onClick={() => {
-                        if (confirm('End Round 1?')) onAction(event.id, 'end-round1');
-                      }}
-                    >
-                      ■ End R1
-                    </button>
-                  </>
-                )}
-                {event.round1Status === 'PAUSED' && (
-                  <>
-                    <button
-                      className={styles.btnResume}
-                      onClick={() => onAction(event.id, 'resume-round1')}
-                    >
-                      ▶ Resume
-                    </button>
-                    <button
-                      className={styles.btnEnd}
-                      onClick={() => {
-                        if (confirm('End Round 1?')) onAction(event.id, 'end-round1');
-                      }}
-                    >
-                      ■ End R1
-                    </button>
-                  </>
-                )}
-                <button
-                  className={styles.btnSpecial}
-                  onClick={() => onAction(event.id, 'qualify-round1')}
-                  title="Compute scores and select Top 10 students"
-                >
-                  ⚡ Finalize Top 10 Qualifiers
-                </button>
-              </div>
-            </div>
-
-            {/* Round 2 Flow */}
-            <div className={styles.roundControlGroup}>
-              <div className={styles.roundControlLabel}>
-                Round 2 (Top 10 Qualifiers) — <strong>{event.round2Status || 'DRAFT'}</strong>
-              </div>
-              <div className={styles.btnRow}>
-                {event.round2Status !== 'RUNNING' && event.round2Status !== 'FINISHED' && (
-                  <button
-                    className={styles.btnGold}
-                    onClick={() => onAction(event.id, 'start-round2')}
-                  >
-                    🏆 Start Round 2 (Top 10)
-                  </button>
-                )}
-                {event.round2Status === 'RUNNING' && (
-                  <>
-                    <button
-                      className={styles.btnPause}
-                      onClick={() => onAction(event.id, 'pause-round2')}
-                    >
-                      ⏸ Pause
-                    </button>
-                    <button
-                      className={styles.btnEnd}
-                      onClick={() => {
-                        if (confirm('End Round 2?')) onAction(event.id, 'end-round2');
-                      }}
-                    >
-                      ■ End R2
-                    </button>
-                  </>
-                )}
-                {event.round2Status === 'PAUSED' && (
-                  <>
-                    <button
-                      className={styles.btnResume}
-                      onClick={() => onAction(event.id, 'resume-round2')}
-                    >
-                      ▶ Resume
-                    </button>
-                    <button
-                      className={styles.btnEnd}
-                      onClick={() => {
-                        if (confirm('End Round 2?')) onAction(event.id, 'end-round2');
-                      }}
-                    >
-                      ■ End R2
-                    </button>
-                  </>
-                )}
-                <button
-                  className={styles.btnChampion}
-                  onClick={() => onAction(event.id, 'compute-final-rankings')}
-                >
-                  👑 Compute Final Rankings (40% R1 + 60% R2)
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal ────────────────────────────────────────────────────────────────────
-
-function Modal({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
-        <div className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>{title}</h3>
-          <button className={styles.modalClose} onClick={onClose}>
-            ✕
-          </button>
-        </div>
-        <div className={styles.modalBody}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Admin Page ──────────────────────────────────────────────────────────
+type Tab = 'control_room' | 'leaderboard' | 'quiz_hub' | 'debugging' | 'students' | 'appearance';
+type LeaderboardFilter = 'active' | 'round1' | 'round2' | 'final' | 'debugging';
 
 export default function AdminPage() {
   const { logout } = useAuth();
-  const navigate = useNavigate();
   const connectionStatus = useConnectionStatus();
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard');
-  const [quizSubTab, setQuizSubTab] = useState<QuizSubTab>('challenges');
 
-  // Events
+  // Navigation tab state
+  const [activeTab, setActiveTab] = useState<Tab>('control_room');
+  const [leaderboardFilter, setLeaderboardFilter] = useState<LeaderboardFilter>('active');
+
+  // Events state
   const [events, setEvents] = useState<Event[]>([]);
-  const [eventVersions, setEventVersions] = useState<Record<string, number>>({});
+  const [selectedEventId, setSelectedEventId] = useState<string>('');
+  const [actionError, setActionError] = useState<string>('');
+  const [actionSuccess, setActionSuccess] = useState<string>('');
+  const [actionLoading, setActionLoading] = useState<boolean>(false);
 
-  // Debugging
-  const [debugProblems, setDebugProblems] = useState<DebuggingProblem[]>([]);
+  // Leaderboard data
+  const [round1Leaderboard, setRound1Leaderboard] = useState<Qualification[]>([]);
+  const [finalLeaderboard, setFinalLeaderboard] = useState<Qualification[]>([]);
+  const [rawResults, setRawResults] = useState<Record<string, unknown[]>>({});
+  const [sortField, setSortField] = useState<'rank' | 'score' | 'rollNo' | 'time'>('rank');
+  const [sortAsc, setSortAsc] = useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Confirmation modal for Round 1 -> Round 2 Qualify
+  const [qualifyModalOpen, setQualifyModalOpen] = useState<boolean>(false);
+  const [qualifyPreviewList, setQualifyPreviewList] = useState<Qualification[]>([]);
+
+  // Quiz Management
+  const [challenges, setChallenges] = useState<QuizChallenge[]>([]);
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [selectedRoundFilter, setSelectedRoundFilter] = useState<number>(1);
+  const [challengeModal, setChallengeModal] = useState<Partial<QuizChallenge> | null>(null);
+  const [quizModal, setQuizModal] = useState<Partial<QuizQuestion> | null>(null);
+  const [importStatus, setImportStatus] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Debugging Management
+  const [problems, setProblems] = useState<DebuggingProblem[]>([]);
   const [debugModal, setDebugModal] = useState<Partial<DebuggingProblem> | null>(null);
 
-  // Technical Quiz Challenges & Questions
-  const [challenges, setChallenges] = useState<QuizChallenge[]>([]);
-  const [challengeModal, setChallengeModal] = useState<Partial<QuizChallenge> | null>(null);
-
-  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
-  const [quizModal, setQuizModal] = useState<Partial<QuizQuestion> | null>(null);
-  const [selectedRoundFilter, setSelectedRoundFilter] = useState<number>(1);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importResult, setImportResult] = useState<string>('');
-
-  // Qualifications & Rankings
-  const [round1Qualifiers, setRound1Qualifiers] = useState<Qualification[]>([]);
-  const [finalRankings, setFinalRankings] = useState<Qualification[]>([]);
-
-  // Students & Theme
+  // Students & Themes
   const [students, setStudents] = useState<Student[]>([]);
-  const [studentModal, setStudentModal] = useState(false);
+  const [studentModal, setStudentModal] = useState<boolean>(false);
   const [newStudent, setNewStudent] = useState({ rollNo: '', name: '', password: '' });
   const [themes, setThemes] = useState<Theme[]>([]);
 
-  // Results & Errors
-  const [results, setResults] = useState<Record<string, unknown[]>>({});
-  const [actionError, setActionError] = useState('');
-  const [actionSuccess, setActionSuccess] = useState('');
-
-  // ── Load Events ────────────────────────────────────────────────────────
+  // ── 1. Load Events ─────────────────────────────────────────────────────────
   const loadEvents = useCallback(async () => {
     try {
       const res = await api.get<{ events: Event[] }>('/admin/events');
       setEvents(res.data.events);
-      const vMap: Record<string, number> = {};
-      res.data.events.forEach((e) => {
-        vMap[e.id] = e.version;
-      });
-      setEventVersions(vMap);
+      if (res.data.events.length > 0 && !selectedEventId) {
+        const active =
+          res.data.events.find((e) => e.status === 'RUNNING' || e.status === 'PAUSED') ||
+          res.data.events.find((e) => e.status === 'READY') ||
+          res.data.events[0];
+        setSelectedEventId(active.id);
+      }
     } catch {
       // Ignore
     }
-  }, []);
+  }, [selectedEventId]);
 
   useEffect(() => {
     loadEvents();
   }, [loadEvents]);
 
-  // ── Socket.IO ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (events.length === 0) return;
-    const socket = getSocket();
+  const currentEvent = useMemo(() => {
+    return (
+      events.find((e) => e.id === selectedEventId) ||
+      events.find((e) => e.status === 'RUNNING') ||
+      events[0]
+    );
+  }, [events, selectedEventId]);
 
-    events.forEach((e) => socket.emit('join:event', e.id));
+  const isLiveRunning = currentEvent?.status === 'RUNNING';
+  const { formatted: timerFormatted, remaining: timerRemaining } = useTimer(
+    isLiveRunning ? currentEvent?.endTime : null
+  );
 
-    function handleStateChange(data: {
-      eventId: string;
-      type: string;
-      name: string;
-      status: string;
-      startTime: string;
-      endTime: string;
-      version: number;
-      currentRound?: number;
-      round1Status?: string;
-      round2Status?: string;
-    }) {
-      setEventVersions((prev) => {
-        const currentVer = prev[data.eventId] ?? 0;
-        if (data.version <= currentVer) return prev;
-        setEvents((evts) =>
-          evts.map((e) =>
-            e.id === data.eventId
-              ? {
-                  ...e,
-                  status: data.status as Event['status'],
-                  startTime: data.startTime,
-                  endTime: data.endTime,
-                  version: data.version,
-                  currentRound: data.currentRound || e.currentRound,
-                  round1Status: data.round1Status || e.round1Status,
-                  round2Status: data.round2Status || e.round2Status,
-                }
-              : e
-          )
-        );
-        return { ...prev, [data.eventId]: data.version };
-      });
+  // ── 2. Socket.IO Live Updates ──────────────────────────────────────────────
+  const loadLeaderboards = useCallback(async () => {
+    if (!currentEvent) return;
+    try {
+      const resultsRes = await api.get<{ results: Record<string, unknown[]> }>('/admin/results');
+      setRawResults(resultsRes.data.results || {});
+
+      if (currentEvent.type === 'TECHNICAL_QUIZ') {
+        const [l1Res, l2Res] = await Promise.all([
+          api.get<{ qualifications: Qualification[] }>(
+            `/admin/events/${currentEvent.id}/round1-leaderboard`
+          ).catch(() => ({ data: { qualifications: [] } })),
+          api.get<{ rankings: Qualification[] }>(
+            `/admin/events/${currentEvent.id}/final-leaderboard`
+          ).catch(() => ({ data: { rankings: [] } })),
+        ]);
+        setRound1Leaderboard(l1Res.data.qualifications || []);
+        setFinalLeaderboard(l2Res.data.rankings || []);
+      }
+    } catch {
+      // Ignore
     }
+  }, [currentEvent]);
 
-    async function handleReconnect() {
-      await loadEvents();
-      events.forEach((e) => socket.emit('join:event', e.id));
+  useEffect(() => {
+    loadLeaderboards();
+  }, [loadLeaderboards]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (currentEvent) {
+      socket.emit('join:event', currentEvent.id);
+    }
+    socket.emit('join:admin');
+
+    function handleStateChange() {
+      loadEvents();
+      loadLeaderboards();
     }
 
     socket.on('event.state_changed', handleStateChange);
-    socket.on('connect', handleReconnect);
+    socket.on('event.round_changed', handleStateChange);
+    socket.on('connect', () => {
+      loadEvents();
+      loadLeaderboards();
+    });
+
     return () => {
       socket.off('event.state_changed', handleStateChange);
-      socket.off('connect', handleReconnect);
+      socket.off('event.round_changed', handleStateChange);
     };
-  }, [events, loadEvents]);
+  }, [currentEvent, loadEvents, loadLeaderboards]);
 
-  // ── Event Action Handler ───────────────────────────────────────────────
-  async function handleEventAction(eventId: string, action: string, body?: Record<string, unknown>) {
+  useEffect(() => {
+    if (!isLiveRunning) return;
+    const interval = setInterval(() => {
+      loadLeaderboards();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isLiveRunning, loadLeaderboards]);
+
+  // ── 3. Load Tab Data ───────────────────────────────────────────────────────
+  const loadTabData = useCallback(async () => {
+    try {
+      if (activeTab === 'quiz_hub') {
+        const [cRes, qRes] = await Promise.all([
+          api.get<{ challenges: QuizChallenge[] }>('/admin/quiz-challenges'),
+          api.get<{ questions: QuizQuestion[] }>(
+            `/admin/quiz-questions?round=${selectedRoundFilter}`
+          ),
+        ]);
+        setChallenges(cRes.data.challenges);
+        setQuizQuestions(qRes.data.questions);
+      } else if (activeTab === 'debugging') {
+        const res = await api.get<{ problems: DebuggingProblem[] }>('/admin/debugging-problems');
+        setProblems(res.data.problems);
+      } else if (activeTab === 'students') {
+        const res = await api.get<{ students: Student[] }>('/admin/students');
+        setStudents(res.data.students);
+      } else if (activeTab === 'appearance') {
+        const res = await api.get<{ themes: Theme[] }>('/admin/themes');
+        setThemes(res.data.themes);
+      }
+    } catch {
+      // Ignore
+    }
+  }, [activeTab, selectedRoundFilter]);
+
+  useEffect(() => {
+    loadTabData();
+    api.get<{ students: Student[] }>('/admin/students').then((r) => setStudents(r.data.students)).catch(() => {});
+  }, [activeTab, loadTabData]);
+
+  // ── 4. Unified Event Actions ───────────────────────────────────────────────
+  async function handleEventAction(action: string, body?: Record<string, unknown>) {
+    if (!currentEvent) return;
     setActionError('');
     setActionSuccess('');
-    try {
-      const res = await api.post(`/admin/events/${eventId}/${action}`, body);
-      if (res.data.event) {
-        setEvents((prev) => prev.map((e) => (e.id === eventId ? res.data.event : e)));
-      }
-      setActionSuccess(`✓ Action "${action}" completed successfully`);
-      loadEvents();
+    setActionLoading(true);
 
-      // If qualification or final rankings action, refresh those views
-      if (action.includes('qualify') || action.includes('rankings')) {
-        loadQuizHubData();
+    try {
+      const res = await api.post(`/admin/events/${currentEvent.id}/${action}`, body);
+      if (res.data.event) {
+        setEvents((prev) => prev.map((e) => (e.id === currentEvent.id ? res.data.event : e)));
       }
+      setActionSuccess(`✓ Action completed: ${action.replace('-', ' ')}`);
+      await loadEvents();
+      await loadLeaderboards();
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
         'Action failed';
       setActionError(msg);
+    } finally {
+      setActionLoading(false);
     }
   }
 
-  // ── Load Data for active tabs ──────────────────────────────────────────
-  const quizEvent = events.find((e) => e.type === 'TECHNICAL_QUIZ');
-
-  const loadQuizHubData = useCallback(async () => {
-    if (!quizEvent) return;
-
+  // ── 5. Open Qualify Preview Modal ──────────────────────────────────────────
+  async function openQualifyModal() {
+    if (!currentEvent) return;
+    setActionError('');
     try {
-      // Challenges
-      const cRes = await api.get<{ challenges: QuizChallenge[] }>('/admin/quiz-challenges');
-      setChallenges(cRes.data.challenges);
-
-      // Questions
-      const qRes = await api.get<{ questions: QuizQuestion[] }>(
-        `/admin/quiz-questions?round=${selectedRoundFilter}`
+      const res = await api.get<{ qualifications: Qualification[] }>(
+        `/admin/events/${currentEvent.id}/round1-leaderboard`
       );
-      setQuizQuestions(qRes.data.questions);
-
-      // Qualifiers
-      const l1Res = await api.get<{ qualifications: Qualification[] }>(
-        `/admin/events/${quizEvent.id}/round1-leaderboard`
-      );
-      setRound1Qualifiers(l1Res.data.qualifications);
-
-      // Final rankings
-      const l2Res = await api.get<{ rankings: Qualification[] }>(
-        `/admin/events/${quizEvent.id}/final-leaderboard`
-      );
-      setFinalRankings(l2Res.data.rankings);
-    } catch {
-      // Ignore
-    }
-  }, [quizEvent, selectedRoundFilter]);
-
-  useEffect(() => {
-    if (activeTab === 'quiz_hub') {
-      loadQuizHubData();
-    } else if (activeTab === 'debugging') {
-      api.get<{ problems: DebuggingProblem[] }>('/admin/debugging-problems')
-        .then((r) => setDebugProblems(r.data.problems))
-        .catch(() => {});
-    } else if (activeTab === 'students') {
-      api.get<{ students: Student[] }>('/admin/students')
-        .then((r) => setStudents(r.data.students))
-        .catch(() => {});
-    } else if (activeTab === 'results') {
-      api.get<{ results: Record<string, unknown[]> }>('/admin/results')
-        .then((r) => setResults(r.data.results))
-        .catch(() => {});
-    } else if (activeTab === 'appearance') {
-      api.get<{ themes: Theme[] }>('/admin/themes')
-        .then((r) => setThemes(r.data.themes))
-        .catch(() => {});
-    }
-  }, [activeTab, loadQuizHubData]);
-
-  // ── Challenge CRUD ─────────────────────────────────────────────────────
-  async function saveChallenge() {
-    if (!challengeModal || !quizEvent) return;
-    try {
-      const payload = { ...challengeModal, eventId: quizEvent.id };
-      if (challengeModal.id) {
-        await api.patch(`/admin/quiz-challenges/${challengeModal.id}`, payload);
+      if (res.data.qualifications && res.data.qualifications.length > 0) {
+        setQualifyPreviewList(res.data.qualifications.slice(0, 10));
       } else {
-        await api.post('/admin/quiz-challenges', payload);
+        const qualRes = await api.post<{ qualifications: Qualification[] }>(
+          `/admin/events/${currentEvent.id}/qualify-round1`,
+          { topCount: 10 }
+        );
+        setQualifyPreviewList(qualRes.data.qualifications.filter((q) => q.isQualified));
+      }
+      setQualifyModalOpen(true);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Failed to prepare qualifiers preview';
+      setActionError(msg);
+    }
+  }
+
+  async function confirmQualifyRound1() {
+    if (!currentEvent) return;
+    setActionLoading(true);
+    try {
+      await api.post(`/admin/events/${currentEvent.id}/qualify-round1`, { topCount: 10 });
+      setActionSuccess('✓ Top 10 Qualifiers successfully promoted and locked in for Round 2!');
+      setQualifyModalOpen(false);
+      await loadEvents();
+      await loadLeaderboards();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Failed to lock in qualifiers';
+      setActionError(msg);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  // ── 6. Leaderboard Sorting and Filtering ───────────────────────────────────
+  const activeLeaderboardData = useMemo(() => {
+    let list: Array<{
+      id: string;
+      rank: number;
+      rollNo: string;
+      name: string;
+      score: number;
+      time: number;
+      isQualified: boolean;
+      statusText: string;
+    }> = [];
+
+    if (currentEvent?.type === 'TECHNICAL_QUIZ') {
+      const isR2 =
+        leaderboardFilter === 'round2' ||
+        leaderboardFilter === 'final' ||
+        (leaderboardFilter === 'active' && currentEvent.currentRound === 2);
+
+      if (isR2 && finalLeaderboard.length > 0) {
+        list = finalLeaderboard.map((q) => ({
+          id: q.id,
+          rank: q.finalRank || q.round1Rank,
+          rollNo: q.user.rollNo,
+          name: q.user.name,
+          score: q.finalScore ?? q.round2Score ?? q.round1Score,
+          time: (q.round2Time || 0) + (q.round1Time || 0),
+          isQualified: q.isQualified,
+          statusText: q.isQualified ? 'Round 2 Finalist' : 'Round 1 Only',
+        }));
+      } else if (round1Leaderboard.length > 0) {
+        list = round1Leaderboard.map((q) => ({
+          id: q.id,
+          rank: q.round1Rank,
+          rollNo: q.user.rollNo,
+          name: q.user.name,
+          score: q.round1Score,
+          time: q.round1Time,
+          isQualified: q.isQualified,
+          statusText: q.isQualified ? 'Qualified Top 10' : 'Participant',
+        }));
+      } else {
+        const raw = (rawResults['TECHNICAL_QUIZ'] as Array<Record<string, unknown>>) || [];
+        list = raw.map((item, idx) => ({
+          id: String(item.id || item.rollNo || idx),
+          rank: Number(item.finalRank || item.round1Rank || idx + 1),
+          rollNo: String(item.rollNo || ''),
+          name: String(item.name || ''),
+          score: Number(item.totalPoints || item.round1Score || 0),
+          time: 0,
+          isQualified: !!item.isQualified,
+          statusText: item.isQualified ? 'Qualified' : 'Participant',
+        }));
+      }
+    } else {
+      const raw = (rawResults['DEBUGGING'] as Array<Record<string, unknown>>) || [];
+      list = raw.map((item, idx) => ({
+        id: String(item.id || item.rollNo || idx),
+        rank: idx + 1,
+        rollNo: String(item.rollNo || ''),
+        name: String(item.name || ''),
+        score: Number(item.totalPoints || 0),
+        time: 0,
+        isQualified: true,
+        statusText: 'Active',
+      }));
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (item) =>
+          item.rollNo.toLowerCase().includes(q) || item.name.toLowerCase().includes(q)
+      );
+    }
+
+    return list.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'score') cmp = b.score - a.score;
+      else if (sortField === 'rollNo') cmp = a.rollNo.localeCompare(b.rollNo);
+      else if (sortField === 'time') cmp = a.time - b.time;
+      else cmp = a.rank - b.rank;
+
+      return sortAsc ? cmp : -cmp;
+    });
+  }, [
+    currentEvent,
+    leaderboardFilter,
+    round1Leaderboard,
+    finalLeaderboard,
+    rawResults,
+    searchQuery,
+    sortField,
+    sortAsc,
+  ]);
+
+  // ── 7. Quiz & Debugging CRUD Handlers ─────────────────────────────────────
+  async function saveChallenge() {
+    if (!challengeModal) return;
+    try {
+      if (challengeModal.id) {
+        await api.patch(`/admin/quiz-challenges/${challengeModal.id}`, challengeModal);
+      } else {
+        await api.post('/admin/quiz-challenges', challengeModal);
       }
       setChallengeModal(null);
-      loadQuizHubData();
-    } catch (err: unknown) {
-      alert(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          'Failed to save challenge'
-      );
-    }
-  }
-
-  async function toggleChallengeActive(challenge: QuizChallenge) {
-    try {
-      await api.patch(`/admin/quiz-challenges/${challenge.id}`, {
-        isActive: !challenge.isActive,
-      });
-      loadQuizHubData();
+      loadTabData();
     } catch {
-      // Ignore
+      alert('Failed to save challenge');
     }
   }
 
-  // ── Question CRUD ──────────────────────────────────────────────────────
-  async function saveQuizQuestion() {
-    if (!quizModal || !quizEvent) return;
+  async function deleteChallenge(id: string) {
+    if (!confirm('Are you sure you want to delete this challenge?')) return;
     try {
-      const payload = {
-        ...quizModal,
-        eventId: quizEvent.id,
-        round: quizModal.round || selectedRoundFilter,
-      };
+      await api.delete(`/admin/quiz-challenges/${id}`);
+      loadTabData();
+    } catch {
+      alert('Failed to delete challenge');
+    }
+  }
+
+  async function saveQuizQuestion() {
+    if (!quizModal) return;
+    try {
       if (quizModal.id) {
-        await api.patch(`/admin/quiz-questions/${quizModal.id}`, payload);
+        await api.patch(`/admin/quiz-questions/${quizModal.id}`, quizModal);
       } else {
-        await api.post('/admin/quiz-questions', payload);
+        await api.post('/admin/quiz-questions', quizModal);
       }
       setQuizModal(null);
-      loadQuizHubData();
-    } catch (err: unknown) {
-      alert(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          'Failed to save question'
-      );
+      loadTabData();
+    } catch {
+      alert('Failed to save question');
     }
   }
 
   async function deleteQuizQuestion(id: string) {
-    if (!confirm('Delete this question?')) return;
-    await api.delete(`/admin/quiz-questions/${id}`).catch(() => {});
-    loadQuizHubData();
-  }
-
-  // ── Excel Import ───────────────────────────────────────────────────────
-  async function handleImportExcel() {
-    if (!importFile || !quizEvent) return;
-    const formData = new FormData();
-    formData.append('file', importFile);
-    formData.append('eventId', quizEvent.id);
-    formData.append('round', String(selectedRoundFilter));
-
+    if (!confirm('Are you sure you want to delete this question?')) return;
     try {
-      const r = await api.post<{ imported: number; errors?: string[] }>(
-        '/admin/quiz-questions/import',
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      );
-      setImportResult(`✓ Successfully imported ${r.data.imported} questions`);
-      setImportFile(null);
-      loadQuizHubData();
-    } catch (err: unknown) {
-      const e = err as { response?: { data?: { error?: string; errors?: string[] } } };
-      const errs =
-        e?.response?.data?.errors?.join('\n') || e?.response?.data?.error || 'Import failed';
-      setImportResult('✗ ' + errs);
+      await api.delete(`/admin/quiz-questions/${id}`);
+      loadTabData();
+    } catch {
+      alert('Failed to delete question');
     }
   }
 
-  // ── Debugging CRUD ─────────────────────────────────────────────────────
+  async function handleImportExcel(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('round', String(selectedRoundFilter));
+    try {
+      setImportStatus('Importing...');
+      const res = await api.post('/admin/quiz-questions/import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportStatus(`Imported ${res.data.count} questions!`);
+      loadTabData();
+      setTimeout(() => setImportStatus(''), 4000);
+    } catch {
+      setImportStatus('Import failed');
+    }
+  }
+
   async function saveDebugProblem() {
     if (!debugModal) return;
     try {
-      const debugEvent = events.find((e) => e.type === 'DEBUGGING');
-      const payload = { ...debugModal, eventId: debugModal.eventId || debugEvent?.id };
       if (debugModal.id) {
-        await api.patch(`/admin/debugging-problems/${debugModal.id}`, payload);
+        await api.patch(`/admin/debugging-problems/${debugModal.id}`, debugModal);
       } else {
-        await api.post('/admin/debugging-problems', payload);
+        await api.post('/admin/debugging-problems', debugModal);
       }
       setDebugModal(null);
-      api.get<{ problems: DebuggingProblem[] }>('/admin/debugging-problems').then((r) =>
-        setDebugProblems(r.data.problems)
-      );
-    } catch (err: unknown) {
-      alert(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          'Failed to save problem'
-      );
+      loadTabData();
+    } catch {
+      alert('Failed to save problem');
     }
   }
 
   async function deleteDebugProblem(id: string) {
     if (!confirm('Delete this problem?')) return;
-    await api.delete(`/admin/debugging-problems/${id}`).catch(() => {});
-    setDebugProblems((prev) => prev.filter((p) => p.id !== id));
+    try {
+      await api.delete(`/admin/debugging-problems/${id}`);
+      loadTabData();
+    } catch {
+      alert('Failed to delete problem');
+    }
   }
 
-  // ── Students & Theme ───────────────────────────────────────────────────
   async function addStudent() {
     try {
-      const r = await api.post<{ user: Student }>('/admin/students', newStudent);
-      setStudents((prev) => [...prev, r.data.user]);
+      await api.post('/admin/students', newStudent);
       setStudentModal(false);
       setNewStudent({ rollNo: '', name: '', password: '' });
-    } catch (err: unknown) {
-      alert(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed'
-      );
+      loadTabData();
+    } catch {
+      alert('Failed to add student');
     }
   }
 
   async function deleteStudent(id: string) {
-    if (!confirm('Delete this student?')) return;
-    await api.delete(`/admin/students/${id}`).catch(() => {});
-    setStudents((prev) => prev.filter((s) => s.id !== id));
-  }
-
-  async function activateTheme(themeId: string) {
+    if (!confirm('Delete student?')) return;
     try {
-      await api.post('/admin/theme/activate', { themeId });
-      const r = await api.get<{ themes: Theme[] }>('/admin/themes');
-      setThemes(r.data.themes);
+      await api.delete(`/admin/students/${id}`);
+      loadTabData();
     } catch {
-      // Ignore
+      alert('Failed to delete student');
     }
   }
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'dashboard', label: '📊 Live Dashboard' },
-    { key: 'quiz_hub', label: '⚡ Technical Quiz (2-Rounds)' },
-    { key: 'debugging', label: '🐛 Debugging Problems' },
-    { key: 'students', label: '👤 Students (60)' },
-    { key: 'results', label: '🏆 Leaderboards' },
-    { key: 'appearance', label: '🎨 Theme' },
-  ];
+  async function activateTheme(id: string) {
+    try {
+      await api.post('/admin/theme/activate', { themeId: id });
+      loadTabData();
+    } catch {
+      alert('Failed to activate theme');
+    }
+  }
+
+  // ── 8. Single Action State Calculation ─────────────────────────────────────
+  const isQuiz = currentEvent?.type === 'TECHNICAL_QUIZ';
+  const hasQualifiersPromoted = round1Leaderboard.some((q) => q.isQualified);
+
+  const renderSingleActionGroup = () => {
+    if (!currentEvent) {
+      return <span>Select an event to manage</span>;
+    }
+
+    // 1. DRAFT STATE
+    if (currentEvent.status === 'DRAFT') {
+      return (
+        <button
+          className={styles.btnPrimary}
+          disabled={actionLoading}
+          onClick={() => handleEventAction('ready')}
+        >
+          {actionLoading ? 'Updating...' : 'Set Event to Ready'}
+        </button>
+      );
+    }
+
+    // 2. READY STATE (Waiting to start)
+    if (currentEvent.status === 'READY') {
+      if (isQuiz) {
+        return (
+          <button
+            className={styles.btnPrimary}
+            disabled={actionLoading}
+            onClick={() => handleEventAction('start-round1')}
+          >
+            {actionLoading ? 'Starting...' : '🚀 Start Round 1 (All Students)'}
+          </button>
+        );
+      }
+      return (
+        <button
+          className={styles.btnPrimary}
+          disabled={actionLoading}
+          onClick={() => handleEventAction('start')}
+        >
+          {actionLoading ? 'Starting...' : '🚀 Start Competition'}
+        </button>
+      );
+    }
+
+    // 3. RUNNING STATE
+    if (currentEvent.status === 'RUNNING') {
+      if (isQuiz) {
+        if (currentEvent.currentRound === 1) {
+          return (
+            <div className={styles.primaryActionGroup}>
+              <button
+                className={styles.btnWarning}
+                disabled={actionLoading}
+                onClick={() => handleEventAction('pause-round1')}
+              >
+                ⏸ Pause Round 1
+              </button>
+              <button
+                className={styles.btnDangerOutline}
+                disabled={actionLoading}
+                onClick={() => {
+                  if (confirm('End Round 1 for all participants now?')) {
+                    handleEventAction('end-round1');
+                  }
+                }}
+              >
+                ⏹ End Round 1
+              </button>
+            </div>
+          );
+        } else {
+          return (
+            <div className={styles.primaryActionGroup}>
+              <button
+                className={styles.btnWarning}
+                disabled={actionLoading}
+                onClick={() => handleEventAction('pause-round2')}
+              >
+                ⏸ Pause Round 2
+              </button>
+              <button
+                className={styles.btnDangerOutline}
+                disabled={actionLoading}
+                onClick={() => {
+                  if (confirm('End Round 2 and finalize Championship now?')) {
+                    handleEventAction('end-round2');
+                  }
+                }}
+              >
+                ⏹ End Round 2
+              </button>
+            </div>
+          );
+        }
+      } else {
+        return (
+          <div className={styles.primaryActionGroup}>
+            <button
+              className={styles.btnWarning}
+              disabled={actionLoading}
+              onClick={() => handleEventAction('pause')}
+            >
+              ⏸ Pause Competition
+            </button>
+            <button
+              className={styles.btnDangerOutline}
+              disabled={actionLoading}
+              onClick={() => {
+                if (confirm('End Debugging Arena competition now?')) {
+                  handleEventAction('end');
+                }
+              }}
+            >
+              ⏹ End Competition
+            </button>
+          </div>
+        );
+      }
+    }
+
+    // 4. PAUSED STATE
+    if (currentEvent.status === 'PAUSED') {
+      if (isQuiz) {
+        const isR1 = currentEvent.currentRound === 1;
+        return (
+          <div className={styles.primaryActionGroup}>
+            <button
+              className={styles.btnPrimary}
+              disabled={actionLoading}
+              onClick={() => handleEventAction(isR1 ? 'resume-round1' : 'resume-round2')}
+            >
+              ▶ Resume {isR1 ? 'Round 1' : 'Round 2'}
+            </button>
+            <button
+              className={styles.btnDangerOutline}
+              disabled={actionLoading}
+              onClick={() => {
+                if (confirm(`End ${isR1 ? 'Round 1' : 'Round 2'} now?`)) {
+                  handleEventAction(isR1 ? 'end-round1' : 'end-round2');
+                }
+              }}
+            >
+              ⏹ End {isR1 ? 'Round 1' : 'Round 2'}
+            </button>
+          </div>
+        );
+      }
+      return (
+        <div className={styles.primaryActionGroup}>
+          <button
+            className={styles.btnPrimary}
+            disabled={actionLoading}
+            onClick={() => handleEventAction('resume')}
+          >
+            ▶ Resume Competition
+          </button>
+          <button
+            className={styles.btnDangerOutline}
+            disabled={actionLoading}
+            onClick={() => {
+              if (confirm('End competition now?')) {
+                handleEventAction('end');
+              }
+            }}
+          >
+            ⏹ End Competition
+          </button>
+        </div>
+      );
+    }
+
+    // 5. FINISHED / TRANSITION STATES (Quiz Round 1 Finished vs Round 2 Finished)
+    if (isQuiz) {
+      if (currentEvent.round1Status === 'FINISHED' && (!currentEvent.round2Status || currentEvent.round2Status === 'NOT_STARTED')) {
+        if (!hasQualifiersPromoted) {
+          return (
+            <button
+              className={styles.btnPrimary}
+              disabled={actionLoading}
+              onClick={openQualifyModal}
+            >
+              👑 Review &amp; Qualify Top 10 for Round 2
+            </button>
+          );
+        } else {
+          return (
+            <div className={styles.primaryActionGroup}>
+              <button
+                className={styles.btnPrimary}
+                disabled={actionLoading}
+                onClick={() => handleEventAction('start-round2')}
+              >
+                🚀 Start Round 2 (Top 10 Qualifiers)
+              </button>
+              <button
+                className={styles.btnSecondary}
+                disabled={actionLoading}
+                onClick={openQualifyModal}
+              >
+                Re-check Top 10
+              </button>
+            </div>
+          );
+        }
+      }
+
+      if (currentEvent.round2Status === 'FINISHED' || currentEvent.status === 'FINISHED') {
+        return (
+          <div className={styles.primaryActionGroup}>
+            <button
+              className={styles.btnPrimary}
+              disabled={actionLoading}
+              onClick={() => handleEventAction('compute-final-rankings')}
+            >
+              🏆 Compute Final Combined Rankings
+            </button>
+          </div>
+        );
+      }
+    }
+
+    // Default finished state
+    return (
+      <div className={styles.primaryActionGroup}>
+        <span style={{ fontWeight: 600, color: 'var(--admin-text-muted)' }}>Event Concluded</span>
+      </div>
+    );
+  };
 
   return (
     <div className={styles.page}>
-      {/* ── Sidebar ─────────────────────────────────────────────────── */}
-      <aside className={styles.sidebar}>
-        <div className={styles.sidebarLogo}>
-          <div className={styles.logoTitle}>SASI</div>
-          <div className={styles.logoSub}>Competition Control Center</div>
+      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
+      <header className={styles.topbar}>
+        <div className={styles.topbarLeft}>
+          <span className={styles.brandTitle}>
+            <span>⚡ SASI</span>
+            <span>// CONTROL ROOM</span>
+          </span>
+          {currentEvent && (
+            <>
+              <div
+                className={`${styles.liveEventPill} ${
+                  currentEvent.status === 'RUNNING' ? styles.liveEventPillActive : ''
+                }`}
+              >
+                {currentEvent.status === 'RUNNING' && <span className={styles.liveDot} />}
+                <span>
+                  {currentEvent.type === 'DEBUGGING' ? 'C Debugging Arena' : 'Technical Quiz'}
+                </span>
+                <span className={`${styles.commandStateBadge} ${styles[`badge${currentEvent.status}`]}`}>
+                  {currentEvent.status}
+                </span>
+              </div>
+              {isQuiz && (
+                <span className={styles.roundPill}>
+                  {currentEvent.currentRound === 2 ? 'Round 2: Championship' : 'Round 1: Qualifiers'}
+                </span>
+              )}
+            </>
+          )}
         </div>
-        <nav className={styles.nav}>
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              className={`${styles.navBtn} ${activeTab === t.key ? styles.navBtnActive : ''}`}
-              onClick={() => setActiveTab(t.key)}
+
+        <div className={styles.topbarCenter}>
+          <div className={styles.timerBlock}>
+            <span className={styles.timerLabel}>Time:</span>
+            <span
+              className={`${styles.timerValue} ${
+                isLiveRunning && timerRemaining < 300 ? styles.timerValueUrgent : ''
+              }`}
             >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <div className={styles.sidebarBottom}>
-          <ConnectionBadge status={connectionStatus} />
-          <button
-            className={styles.logoutBtn}
-            onClick={() => {
-              logout();
-              navigate('/');
-            }}
-          >
+              {isLiveRunning
+                ? timerFormatted
+                : `${Math.floor((currentEvent?.durationSeconds || 1800) / 60)}:00`}
+            </span>
+          </div>
+        </div>
+
+        <div className={styles.topbarRight}>
+          <div className={styles.studentCountPill}>
+            <ConnectionBadge status={connectionStatus} />
+            <span>{students.length} Students</span>
+          </div>
+          <button className={styles.logoutBtn} onClick={logout}>
             Logout
           </button>
         </div>
-      </aside>
+      </header>
 
-      {/* ── Main Content ────────────────────────────────────────────── */}
-      <main className={styles.content}>
+      {/* ── Nav Tabs ─────────────────────────────────────────────────────── */}
+      <nav className={styles.navBar}>
+        {[
+          { id: 'control_room', label: 'Control Room' },
+          { id: 'leaderboard', label: 'Live Leaderboard' },
+          { id: 'quiz_hub', label: 'Quiz Management' },
+          { id: 'debugging', label: 'Debugging Arena' },
+          { id: 'students', label: 'Students' },
+          { id: 'appearance', label: 'Theme & Display' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            className={`${styles.navTab} ${activeTab === tab.id ? styles.navTabActive : ''}`}
+            onClick={() => setActiveTab(tab.id as Tab)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* ── Main View Area ───────────────────────────────────────────────── */}
+      <main className={styles.mainContent}>
         {actionError && (
-          <div className={styles.globalError}>
-            {actionError} <button onClick={() => setActionError('')}>✕</button>
+          <div className={styles.alertError}>
+            <span>{actionError}</span>
+            <button className={styles.alertCloseBtn} onClick={() => setActionError('')}>
+              ×
+            </button>
           </div>
         )}
         {actionSuccess && (
-          <div className={styles.globalSuccess}>
-            {actionSuccess} <button onClick={() => setActionSuccess('')}>✕</button>
+          <div className={styles.alertSuccess}>
+            <span>{actionSuccess}</span>
+            <button className={styles.alertCloseBtn} onClick={() => setActionSuccess('')}>
+              ×
+            </button>
           </div>
         )}
 
-        {/* ── DASHBOARD ─────────────────────────────────────────────── */}
-        {activeTab === 'dashboard' && (
-          <div>
-            <div className={styles.pageHeader}>
-              <div>
-                <h2 className={styles.pageTitle}>Live Event Controller</h2>
-                <p className={styles.pageSubtitle}>
-                  Control the 2 top-level games: Debugging &amp; Technical Quiz.
-                </p>
+        {/* ── TAB 1: CONTROL ROOM ─────────────────────────────────────────── */}
+        {activeTab === 'control_room' && (
+          <>
+            {/* Event Selector & Command Hero Card */}
+            <div className={styles.commandCard}>
+              <div className={styles.commandHeader}>
+                <div className={styles.commandTitleBlock}>
+                  <span className={styles.commandTitle}>Active Event:</span>
+                  <select
+                    className={styles.select}
+                    style={{ width: 'auto', minWidth: '240px' }}
+                    value={selectedEventId}
+                    onChange={(e) => setSelectedEventId(e.target.value)}
+                  >
+                    {events.map((ev) => (
+                      <option key={ev.id} value={ev.id}>
+                        {ev.name} ({ev.type === 'DEBUGGING' ? 'C Debugging' : 'Quiz'}) [{ev.status}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {currentEvent && (
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
+                      Duration: {Math.floor(currentEvent.durationSeconds / 60)} min
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.commandStageBody}>
+                <div className={styles.commandInstructions}>
+                  <span className={styles.commandInstructionTitle}>
+                    {currentEvent?.status === 'RUNNING'
+                      ? 'Event In Progress'
+                      : currentEvent?.status === 'PAUSED'
+                      ? 'Event Suspended'
+                      : currentEvent?.status === 'READY'
+                      ? 'Ready to Launch'
+                      : isQuiz && currentEvent?.round1Status === 'FINISHED' && !hasQualifiersPromoted
+                      ? 'Round 1 Ended — Action Required'
+                      : isQuiz && hasQualifiersPromoted && currentEvent?.round2Status !== 'RUNNING'
+                      ? 'Top 10 Qualifiers Locked'
+                      : 'Control Room Standby'}
+                  </span>
+                  <span className={styles.commandInstructionSub}>
+                    {currentEvent?.status === 'RUNNING'
+                      ? 'Submissions and socket telemetry are live updating below.'
+                      : currentEvent?.status === 'READY'
+                      ? 'Participants are in waiting lobby. Click start when ready.'
+                      : isQuiz && currentEvent?.round1Status === 'FINISHED' && !hasQualifiersPromoted
+                      ? 'Confirm the Top 10 leaderboard standings to unlock Round 2 for qualifiers.'
+                      : 'Use the primary command button to transition event states.'}
+                  </span>
+                </div>
+
+                <div>{renderSingleActionGroup()}</div>
               </div>
             </div>
 
-            <div className={styles.eventGrid}>
-              {events.map((e) => (
-                <EventCard key={e.id} event={e} onAction={handleEventAction} />
-              ))}
-              {events.length === 0 && <p className={styles.empty}>Loading events...</p>}
+            {/* Quick Live Standings Snapshot */}
+            <div className={styles.panelCard}>
+              <div className={styles.panelHeader}>
+                <div className={styles.panelTitle}>
+                  <span>⚡ Active Round Leaderboard</span>
+                  <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)', fontWeight: 500 }}>
+                    ({activeLeaderboardData.length} records)
+                  </span>
+                </div>
+                <div className={styles.panelActions}>
+                  <button className={styles.btnSecondary} onClick={() => setActiveTab('leaderboard')}>
+                    Full Leaderboard View →
+                  </button>
+                </div>
+              </div>
+
+              <div className={styles.tableWrapper}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '60px' }}>Rank</th>
+                      <th>Roll No</th>
+                      <th>Name</th>
+                      <th>Score</th>
+                      <th>Time / Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeLeaderboardData.slice(0, 15).map((row, idx) => (
+                      <tr key={row.id} className={idx < 10 ? styles.tableRowTop10 : ''}>
+                        <td>
+                          <span
+                            className={`${styles.rankBadge} ${
+                              idx === 0
+                                ? styles.rankGold
+                                : idx === 1
+                                ? styles.rankSilver
+                                : idx === 2
+                                ? styles.rankBronze
+                                : ''
+                            }`}
+                          >
+                            {row.rank}
+                          </span>
+                        </td>
+                        <td>
+                          <strong>{row.rollNo}</strong>
+                        </td>
+                        <td>{row.name}</td>
+                        <td>
+                          <strong style={{ color: 'var(--admin-red)' }}>{row.score} pts</strong>
+                        </td>
+                        <td>
+                          {row.isQualified ? (
+                            <span className={styles.statusQualified}>{row.statusText}</span>
+                          ) : (
+                            <span className={styles.statusEliminated}>{row.statusText}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {activeLeaderboardData.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={styles.emptyState}>
+                          No active participants or submissions recorded yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── TAB 2: FULL LEADERBOARD ────────────────────────────────────── */}
+        {activeTab === 'leaderboard' && (
+          <div className={styles.panelCard}>
+            <div className={styles.panelHeader}>
+              <div className={styles.panelTitle}>
+                <span>🏆 Competition Leaderboards</span>
+              </div>
+              <div className={styles.panelActions}>
+                <div className={styles.filterPills}>
+                  {(
+                    [
+                      { id: 'active', label: 'Active Round' },
+                      { id: 'round1', label: 'Round 1 Qualifiers' },
+                      { id: 'round2', label: 'Round 2 Championship' },
+                      { id: 'final', label: 'Final Rankings' },
+                      { id: 'debugging', label: 'Debugging' },
+                    ] as Array<{ id: LeaderboardFilter; label: string }>
+                  ).map((pill) => (
+                    <button
+                      key={pill.id}
+                      className={`${styles.filterPillBtn} ${
+                        leaderboardFilter === pill.id ? styles.filterPillBtnActive : ''
+                      }`}
+                      onClick={() => setLeaderboardFilter(pill.id)}
+                    >
+                      {pill.label}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className={styles.input}
+                  style={{ width: '200px' }}
+                  placeholder="Search student..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className={styles.tableWrapper}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th
+                      className={styles.tablethSortable}
+                      onClick={() => {
+                        setSortField('rank');
+                        setSortAsc(!sortAsc);
+                      }}
+                    >
+                      Rank {sortField === 'rank' ? (sortAsc ? '▲' : '▼') : ''}
+                    </th>
+                    <th
+                      className={styles.tablethSortable}
+                      onClick={() => {
+                        setSortField('rollNo');
+                        setSortAsc(!sortAsc);
+                      }}
+                    >
+                      Roll No {sortField === 'rollNo' ? (sortAsc ? '▲' : '▼') : ''}
+                    </th>
+                    <th>Name</th>
+                    <th
+                      className={styles.tablethSortable}
+                      onClick={() => {
+                        setSortField('score');
+                        setSortAsc(!sortAsc);
+                      }}
+                    >
+                      Score {sortField === 'score' ? (sortAsc ? '▲' : '▼') : ''}
+                    </th>
+                    <th
+                      className={styles.tablethSortable}
+                      onClick={() => {
+                        setSortField('time');
+                        setSortAsc(!sortAsc);
+                      }}
+                    >
+                      Time (s) {sortField === 'time' ? (sortAsc ? '▲' : '▼') : ''}
+                    </th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeLeaderboardData.map((row, idx) => (
+                    <tr key={row.id} className={idx < 10 ? styles.tableRowTop10 : ''}>
+                      <td>
+                        <span
+                          className={`${styles.rankBadge} ${
+                            row.rank === 1
+                              ? styles.rankGold
+                              : row.rank === 2
+                              ? styles.rankSilver
+                              : row.rank === 3
+                              ? styles.rankBronze
+                              : ''
+                          }`}
+                        >
+                          {row.rank}
+                        </span>
+                      </td>
+                      <td>
+                        <strong>{row.rollNo}</strong>
+                      </td>
+                      <td>{row.name}</td>
+                      <td>
+                        <strong style={{ color: 'var(--admin-red)' }}>{row.score} pts</strong>
+                      </td>
+                      <td>{row.time ? `${row.time}s` : '—'}</td>
+                      <td>
+                        {row.isQualified ? (
+                          <span className={styles.statusQualified}>{row.statusText}</span>
+                        ) : (
+                          <span className={styles.statusEliminated}>{row.statusText}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {activeLeaderboardData.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className={styles.emptyState}>
+                        No records match the current filter or search criteria.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
 
-        {/* ── TECHNICAL QUIZ HUB (2-ROUNDS) ─────────────────────────── */}
+        {/* ── TAB 3: QUIZ MANAGEMENT ───────────────────────────────────────── */}
         {activeTab === 'quiz_hub' && (
-          <div>
-            <div className={styles.pageHeader}>
-              <div>
-                <h2 className={styles.pageTitle}>⚡ Technical Quiz Module (2 Rounds)</h2>
-                <p className={styles.pageSubtitle}>
-                  Round 1 (60 participants) → Top 10 Qualifiers → Round 2 (Championship Final)
-                </p>
-              </div>
-            </div>
-
-            {/* Sub-nav */}
-            <div className={styles.subNav}>
-              <button
-                className={`${styles.subTabBtn} ${
-                  quizSubTab === 'challenges' ? styles.subTabActive : ''
-                }`}
-                onClick={() => setQuizSubTab('challenges')}
-              >
-                🧩 Challenge Stages
-              </button>
-              <button
-                className={`${styles.subTabBtn} ${
-                  quizSubTab === 'questions' ? styles.subTabActive : ''
-                }`}
-                onClick={() => setQuizSubTab('questions')}
-              >
-                ❓ Questions Bank
-              </button>
-              <button
-                className={`${styles.subTabBtn} ${
-                  quizSubTab === 'round1_qualifiers' ? styles.subTabActive : ''
-                }`}
-                onClick={() => setQuizSubTab('round1_qualifiers')}
-              >
-                ⚡ Round 1 Qualifiers (Top 10)
-              </button>
-              <button
-                className={`${styles.subTabBtn} ${
-                  quizSubTab === 'final_rankings' ? styles.subTabActive : ''
-                }`}
-                onClick={() => setQuizSubTab('final_rankings')}
-              >
-                🏆 Final Championship Standings
-              </button>
-            </div>
-
-            {/* 1. CHALLENGE STAGES SUBTAB */}
-            {quizSubTab === 'challenges' && (
-              <div className={styles.tabContent}>
-                <div className={styles.tabHeader}>
-                  <h3 className={styles.sectionTitle}>Configured Challenges</h3>
+          <>
+            {/* Stage / Challenge Cards */}
+            <div className={styles.panelCard}>
+              <div className={styles.panelHeader}>
+                <div className={styles.panelTitle}>
+                  <span>🎯 Quiz Stages &amp; Challenges</span>
+                </div>
+                <div className={styles.panelActions}>
                   <button
                     className={styles.btnPrimary}
                     onClick={() =>
                       setChallengeModal({
-                        round: 1,
+                        round: selectedRoundFilter,
                         type: 'RAPID_FIRE',
                         points: 100,
                         isActive: true,
-                        isLocked: false,
                       })
                     }
                   >
-                    + Add Challenge
+                    + Add Challenge Stage
                   </button>
                 </div>
+              </div>
 
-                <div className={styles.challengeGrid}>
+              <div style={{ padding: '1rem' }}>
+                <div className={styles.cardGrid}>
                   {challenges.map((c) => (
-                    <div
-                      key={c.id}
-                      className={`${styles.challengeCard} ${
-                        c.isActive ? styles.cActive : styles.cInactive
-                      }`}
-                    >
-                      <div className={styles.cHeader}>
-                        <span className={styles.cRoundBadge}>Round {c.round}</span>
-                        <span className={styles.cTypeBadge}>{c.type}</span>
-                        <button
-                          className={c.isActive ? styles.btnToggleOn : styles.btnToggleOff}
-                          onClick={() => toggleChallengeActive(c)}
-                        >
-                          {c.isActive ? 'Active' : 'Disabled'}
-                        </button>
+                    <div key={c.id} className={styles.itemCard}>
+                      <div className={styles.itemCardHeader}>
+                        <div>
+                          <div className={styles.itemTitle}>{c.title}</div>
+                          <div className={styles.itemSub}>
+                            Round {c.round} • {c.type} • {c.points} pts
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.25rem' }}>
+                          <button
+                            className={styles.btnIcon}
+                            onClick={() => setChallengeModal({ ...c })}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className={styles.btnIcon}
+                            onClick={() => deleteChallenge(c.id)}
+                          >
+                            ✕
+                          </button>
+                        </div>
                       </div>
-                      <h4 className={styles.cTitle}>{c.title}</h4>
-                      <p className={styles.cDesc}>{c.description || c.subtitle}</p>
-                      <div className={styles.cFooter}>
-                        <span>Points: {c.points}</span>
-                        <span>Questions: {c._count?.questions ?? 0}</span>
-                        <button
-                          className={styles.btnSmall}
-                          onClick={() => setChallengeModal({ ...c })}
-                        >
-                          Edit
-                        </button>
+                      <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
+                        {c.description || c.subtitle || 'No stage description.'}
                       </div>
                     </div>
                   ))}
+                  {challenges.length === 0 && (
+                    <div className={styles.emptyState} style={{ gridColumn: '1 / -1' }}>
+                      No challenge stages configured yet.
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
 
-            {/* 2. QUESTIONS BANK SUBTAB */}
-            {quizSubTab === 'questions' && (
-              <div className={styles.tabContent}>
-                <div className={styles.tabHeader}>
-                  <div className={styles.filterRow}>
+            {/* Questions Table with Round Filters and Excel Import */}
+            <div className={styles.panelCard}>
+              <div className={styles.panelHeader}>
+                <div className={styles.panelTitle}>
+                  <span>❓ Question Bank ({quizQuestions.length})</span>
+                </div>
+                <div className={styles.panelActions}>
+                  <div className={styles.filterPills}>
                     <button
-                      className={`${styles.filterBtn} ${
-                        selectedRoundFilter === 1 ? styles.filterActive : ''
+                      className={`${styles.filterPillBtn} ${
+                        selectedRoundFilter === 1 ? styles.filterPillBtnActive : ''
                       }`}
                       onClick={() => setSelectedRoundFilter(1)}
                     >
-                      Round 1 Questions
+                      Round 1 (Qualifiers)
                     </button>
                     <button
-                      className={`${styles.filterBtn} ${
-                        selectedRoundFilter === 2 ? styles.filterActive : ''
+                      className={`${styles.filterPillBtn} ${
+                        selectedRoundFilter === 2 ? styles.filterPillBtnActive : ''
                       }`}
                       onClick={() => setSelectedRoundFilter(2)}
                     >
-                      Round 2 Questions (Top 10)
+                      Round 2 (Top 10)
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      className={styles.btnSecondary}
-                      onClick={() => window.open('/api/admin/quiz-questions/template', '_blank')}
-                    >
-                      ⬇ Excel Template
-                    </button>
-                    <button
-                      className={styles.btnPrimary}
-                      onClick={() =>
-                        setQuizModal({
-                          round: selectedRoundFilter,
-                          category: 'AI',
-                          type: 'MCQ',
-                          correctAnswer: 'A',
-                          points: 15,
-                        })
-                      }
-                    >
-                      + Add Question
-                    </button>
-                  </div>
-                </div>
-
-                {/* Import Box */}
-                <div className={styles.importBox}>
-                  <strong>Import Questions for Round {selectedRoundFilter}:</strong>
                   <input
                     type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleImportExcel}
                   />
                   <button
                     className={styles.btnSecondary}
-                    disabled={!importFile}
-                    onClick={handleImportExcel}
+                    onClick={() => fileInputRef.current?.click()}
                   >
-                    Upload Excel
+                    📂 Import Excel
                   </button>
-                  {importResult && (
-                    <span
-                      className={importResult.startsWith('✓') ? styles.importOk : styles.importErr}
-                    >
-                      {importResult}
+                  {importStatus && (
+                    <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 700, color: 'var(--admin-red)' }}>
+                      {importStatus}
                     </span>
                   )}
-                </div>
 
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Category</th>
-                        <th>Type</th>
-                        <th>Question</th>
-                        <th>Correct Answer</th>
-                        <th>Points</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {quizQuestions.map((q, i) => (
-                        <tr key={q.id}>
-                          <td>{i + 1}</td>
-                          <td>
-                            <span className={styles.catBadge}>{q.category}</span>
-                          </td>
-                          <td>
-                            <span className={styles.typeBadge}>{q.type}</span>
-                          </td>
-                          <td title={q.question}>
-                            {q.question.length > 50 ? q.question.slice(0, 50) + '…' : q.question}
-                          </td>
-                          <td>
-                            <span className={styles.correctBadge}>{q.correctAnswer}</span>
-                          </td>
-                          <td>{q.points}</td>
-                          <td>
+                  <button
+                    className={styles.btnPrimary}
+                    onClick={() =>
+                      setQuizModal({
+                        round: selectedRoundFilter,
+                        type: 'MCQ',
+                        points: 10,
+                        category: 'AI',
+                        correctAnswer: 'A',
+                      })
+                    }
+                  >
+                    + Add Question
+                  </button>
+                </div>
+              </div>
+
+              <div className={styles.tableWrapper}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '50px' }}>#</th>
+                      <th>Category</th>
+                      <th>Type</th>
+                      <th>Question Prompt</th>
+                      <th>Answer</th>
+                      <th>Points</th>
+                      <th style={{ width: '110px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quizQuestions.map((q, idx) => (
+                      <tr key={q.id}>
+                        <td>{idx + 1}</td>
+                        <td>
+                          <strong>{q.category}</strong>
+                        </td>
+                        <td>{q.type}</td>
+                        <td style={{ maxWidth: '400px' }}>{q.question}</td>
+                        <td>
+                          <span className={styles.statusQualified}>{q.correctAnswer}</span>
+                        </td>
+                        <td>{q.points}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.25rem' }}>
                             <button
-                              className={styles.btnSmall}
+                              className={styles.btnIcon}
                               onClick={() => setQuizModal({ ...q })}
                             >
-                              Edit
+                              ✎
                             </button>
                             <button
-                              className={`${styles.btnSmall} ${styles.btnDanger}`}
+                              className={styles.btnIcon}
                               onClick={() => deleteQuizQuestion(q.id)}
                             >
-                              Delete
+                              ✕
                             </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {quizQuestions.length === 0 && (
-                    <p className={styles.empty}>No questions found for this round.</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 3. ROUND 1 QUALIFIERS SUBTAB */}
-            {quizSubTab === 'round1_qualifiers' && (
-              <div className={styles.tabContent}>
-                <div className={styles.tabHeader}>
-                  <h3 className={styles.sectionTitle}>
-                    Round 1 Participant Standings ({round1Qualifiers.length} Students)
-                  </h3>
-                  <button
-                    className={styles.btnPrimary}
-                    onClick={() => {
-                      if (quizEvent) handleEventAction(quizEvent.id, 'qualify-round1');
-                    }}
-                  >
-                    ↻ Re-calculate &amp; Select Top 10
-                  </button>
-                </div>
-
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Rank</th>
-                        <th>Roll No</th>
-                        <th>Student Name</th>
-                        <th>R1 Score</th>
-                        <th>Time (s)</th>
-                        <th>Round 2 Status</th>
+                          </div>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {round1Qualifiers.map((q) => (
-                        <tr
-                          key={q.id}
-                          className={q.isQualified ? styles.rowQualified : undefined}
-                        >
-                          <td>
-                            <strong>#{q.round1Rank}</strong>
-                          </td>
-                          <td>
-                            <code>{q.user.rollNo}</code>
-                          </td>
-                          <td>{q.user.name}</td>
-                          <td>
-                            <strong>{q.round1Score} pts</strong>
-                          </td>
-                          <td>{q.round1Time}s</td>
-                          <td>
-                            {q.isQualified ? (
-                              <span className={styles.qualifiedBadge}>
-                                ✓ QUALIFIED (Top 10)
-                              </span>
-                            ) : (
-                              <span className={styles.notQualifiedBadge}>
-                                Round 1 Finished
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {round1Qualifiers.length === 0 && (
-                    <p className={styles.empty}>
-                      No Round 1 results yet. Run Round 1 and click "Finalize Top 10 Qualifiers".
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 4. FINAL RANKINGS SUBTAB */}
-            {quizSubTab === 'final_rankings' && (
-              <div className={styles.tabContent}>
-                <div className={styles.tabHeader}>
-                  <h3 className={styles.sectionTitle}>
-                    🏆 Tournament Final Rankings (40% R1 + 60% R2)
-                  </h3>
-                  <button
-                    className={styles.btnPrimary}
-                    onClick={() => {
-                      if (quizEvent) handleEventAction(quizEvent.id, 'compute-final-rankings');
-                    }}
-                  >
-                    ↻ Recompute Final Rankings
-                  </button>
-                </div>
-
-                <div className={styles.tableWrap}>
-                  <table className={styles.table}>
-                    <thead>
+                    ))}
+                    {quizQuestions.length === 0 && (
                       <tr>
-                        <th>Final Rank</th>
-                        <th>Roll No</th>
-                        <th>Name</th>
-                        <th>R1 Score (40%)</th>
-                        <th>R2 Score (60%)</th>
-                        <th>Final Weighted Score</th>
-                        <th>Status</th>
+                        <td colSpan={7} className={styles.emptyState}>
+                          No questions found for Round {selectedRoundFilter}.
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {finalRankings.map((r, i) => (
-                        <tr
-                          key={r.id}
-                          className={i === 0 ? styles.winnerRow : undefined}
-                        >
-                          <td>
-                            <span className={styles.rankIcon}>
-                              {i === 0
-                                ? '🥇 Champion'
-                                : i === 1
-                                ? '🥈 1st Runner Up'
-                                : i === 2
-                                ? '🥉 2nd Runner Up'
-                                : `#${r.finalRank || i + 1}`}
-                            </span>
-                          </td>
-                          <td>
-                            <code>{r.user.rollNo}</code>
-                          </td>
-                          <td>
-                            <strong>{r.user.name}</strong>
-                          </td>
-                          <td>{r.round1Score} pts</td>
-                          <td>{r.round2Score} pts</td>
-                          <td>
-                            <strong className={styles.goldText}>{r.finalScore} pts</strong>
-                          </td>
-                          <td>
-                            {r.isQualified ? (
-                              <span className={styles.finalistBadge}>Finalist</span>
-                            ) : (
-                              <span>Round 1</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {finalRankings.length === 0 && (
-                    <p className={styles.empty}>
-                      Final rankings will appear after Round 2 concludes.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Challenge Modal */}
-            {challengeModal !== null && (
-              <Modal
-                title={challengeModal.id ? 'Edit Challenge' : 'Add Challenge'}
-                onClose={() => setChallengeModal(null)}
-              >
-                <div className={styles.formGrid}>
-                  <label>
-                    Round
-                    <select
-                      className={styles.input}
-                      value={challengeModal.round ?? 1}
-                      onChange={(e) =>
-                        setChallengeModal((p) => ({ ...p!, round: +e.target.value }))
-                      }
-                    >
-                      <option value={1}>Round 1 (60 Students)</option>
-                      <option value={2}>Round 2 (Top 10 Qualifiers)</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Challenge Type
-                    <select
-                      className={styles.input}
-                      value={challengeModal.type || 'RAPID_FIRE'}
-                      onChange={(e) =>
-                        setChallengeModal((p) => ({ ...p!, type: e.target.value }))
-                      }
-                    >
-                      <option value="RAPID_FIRE">⚡ Rapid Fire</option>
-                      <option value="GUESS_THE_TECH">🔍 Guess the Tech</option>
-                      <option value="TECH_SHUFFLE">🔀 Tech Shuffle</option>
-                      <option value="PUZZLE_GRID">🧩 Puzzle Grid (3x3)</option>
-                      <option value="TECH_SHOWDOWN">⚔️ Tech Showdown</option>
-                      <option value="TECH_TODAY">📰 Tech Today</option>
-                      <option value="REAL_OR_FAKE">🎭 Real or Fake</option>
-                      <option value="FINAL_CHALLENGE">👑 Final Challenge</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Title
-                    <input
-                      className={styles.input}
-                      value={challengeModal.title || ''}
-                      onChange={(e) =>
-                        setChallengeModal((p) => ({ ...p!, title: e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label>
-                    Points
-                    <input
-                      className={styles.input}
-                      type="number"
-                      value={challengeModal.points ?? 100}
-                      onChange={(e) =>
-                        setChallengeModal((p) => ({ ...p!, points: +e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className={styles.fullWidth}>
-                    Description / Subtitle
-                    <input
-                      className={styles.input}
-                      value={challengeModal.subtitle || challengeModal.description || ''}
-                      onChange={(e) =>
-                        setChallengeModal((p) => ({
-                          ...p!,
-                          subtitle: e.target.value,
-                          description: e.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className={styles.modalActions}>
-                  <button className={styles.btnSecondary} onClick={() => setChallengeModal(null)}>
-                    Cancel
-                  </button>
-                  <button className={styles.btnPrimary} onClick={saveChallenge}>
-                    Save Challenge
-                  </button>
-                </div>
-              </Modal>
-            )}
-
-            {/* Question Modal */}
-            {quizModal !== null && (
-              <Modal
-                title={quizModal.id ? 'Edit Question' : 'Add Question'}
-                onClose={() => setQuizModal(null)}
-              >
-                <div className={styles.formGrid}>
-                  <label>
-                    Round
-                    <select
-                      className={styles.input}
-                      value={quizModal.round ?? selectedRoundFilter}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, round: +e.target.value }))
-                      }
-                    >
-                      <option value={1}>Round 1</option>
-                      <option value={2}>Round 2 (Top 10)</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Challenge Stage
-                    <select
-                      className={styles.input}
-                      value={quizModal.challengeId || ''}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, challengeId: e.target.value || null }))
-                      }
-                    >
-                      <option value="">-- General / Any --</option>
-                      {challenges
-                        .filter((c) => c.round === (quizModal.round || selectedRoundFilter))
-                        .map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.title}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-
-                  <label>
-                    Question Type
-                    <select
-                      className={styles.input}
-                      value={quizModal.type || 'MCQ'}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, type: e.target.value }))
-                      }
-                    >
-                      <option value="MCQ">Multiple Choice (MCQ)</option>
-                      <option value="REAL_OR_FAKE">Real or Fake (Fact vs Myth)</option>
-                      <option value="SHUFFLE_ORDER">Tech Shuffle Sequence</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Category
-                    <input
-                      className={styles.input}
-                      value={quizModal.category || 'AI'}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, category: e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className={styles.fullWidth}>
-                    Question Prompt
-                    <textarea
-                      className={styles.textarea}
-                      rows={3}
-                      value={quizModal.question || ''}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, question: e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className={styles.fullWidth}>
-                    Image URL (Optional)
-                    <input
-                      className={styles.input}
-                      value={quizModal.imageUrl || ''}
-                      placeholder="https://..."
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, imageUrl: e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  {quizModal.type !== 'REAL_OR_FAKE' && (
-                    <>
-                      <label>
-                        Option A
-                        <input
-                          className={styles.input}
-                          value={quizModal.optionA || ''}
-                          onChange={(e) =>
-                            setQuizModal((p) => ({ ...p!, optionA: e.target.value }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Option B
-                        <input
-                          className={styles.input}
-                          value={quizModal.optionB || ''}
-                          onChange={(e) =>
-                            setQuizModal((p) => ({ ...p!, optionB: e.target.value }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Option C
-                        <input
-                          className={styles.input}
-                          value={quizModal.optionC || ''}
-                          onChange={(e) =>
-                            setQuizModal((p) => ({ ...p!, optionC: e.target.value }))
-                          }
-                        />
-                      </label>
-                      <label>
-                        Option D
-                        <input
-                          className={styles.input}
-                          value={quizModal.optionD || ''}
-                          onChange={(e) =>
-                            setQuizModal((p) => ({ ...p!, optionD: e.target.value }))
-                          }
-                        />
-                      </label>
-                    </>
-                  )}
-
-                  <label>
-                    Correct Answer
-                    {quizModal.type === 'REAL_OR_FAKE' ? (
-                      <select
-                        className={styles.input}
-                        value={quizModal.correctAnswer || 'REAL'}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
-                        }
-                      >
-                        <option value="REAL">REAL</option>
-                        <option value="FAKE">FAKE</option>
-                      </select>
-                    ) : quizModal.type === 'SHUFFLE_ORDER' ? (
-                      <input
-                        className={styles.input}
-                        value={quizModal.correctAnswer || ''}
-                        placeholder='["1. First", "2. Second", "3. Third"]'
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
-                        }
-                      />
-                    ) : (
-                      <select
-                        className={styles.input}
-                        value={quizModal.correctAnswer || 'A'}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
-                        }
-                      >
-                        <option value="A">A</option>
-                        <option value="B">B</option>
-                        <option value="C">C</option>
-                        <option value="D">D</option>
-                      </select>
                     )}
-                  </label>
-
-                  <label>
-                    Points
-                    <input
-                      className={styles.input}
-                      type="number"
-                      value={quizModal.points ?? 15}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, points: +e.target.value }))
-                      }
-                    />
-                  </label>
-
-                  <label className={styles.fullWidth}>
-                    Explanation
-                    <textarea
-                      className={styles.textarea}
-                      rows={2}
-                      value={quizModal.explanation || ''}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, explanation: e.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className={styles.modalActions}>
-                  <button className={styles.btnSecondary} onClick={() => setQuizModal(null)}>
-                    Cancel
-                  </button>
-                  <button className={styles.btnPrimary} onClick={saveQuizQuestion}>
-                    Save Question
-                  </button>
-                </div>
-              </Modal>
-            )}
-          </div>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
-        {/* ── DEBUGGING PROBLEMS TAB ────────────────────────────────── */}
+        {/* ── TAB 4: DEBUGGING ARENA ───────────────────────────────────────── */}
         {activeTab === 'debugging' && (
-          <div>
-            <div className={styles.tabHeader}>
-              <h2 className={styles.pageTitle}>Debugging Problems</h2>
-              <button
-                className={styles.btnPrimary}
-                onClick={() => {
-                  const debugEvent = events.find((e) => e.type === 'DEBUGGING');
-                  setDebugModal({
-                    eventId: debugEvent?.id,
-                    points: 100,
-                    timeLimit: 5,
-                    testCases: [],
-                  });
-                }}
-              >
-                + Add Problem
-              </button>
+          <div className={styles.panelCard}>
+            <div className={styles.panelHeader}>
+              <div className={styles.panelTitle}>
+                <span>🐛 C Debugging Problems ({problems.length})</span>
+              </div>
+              <div className={styles.panelActions}>
+                <button
+                  className={styles.btnPrimary}
+                  onClick={() => {
+                    const debugEvent = events.find((e) => e.type === 'DEBUGGING');
+                    setDebugModal({
+                      eventId: debugEvent?.id,
+                      points: 100,
+                      timeLimit: 5,
+                      testCases: [],
+                    });
+                  }}
+                >
+                  + Add Problem
+                </button>
+              </div>
             </div>
-            <div className={styles.tableWrap}>
+
+            <div className={styles.tableWrapper}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>Title</th>
+                    <th style={{ width: '50px' }}>#</th>
+                    <th>Problem Title</th>
                     <th>Points</th>
                     <th>Time Limit</th>
-                    <th>Actions</th>
+                    <th>Description</th>
+                    <th style={{ width: '120px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {debugProblems.map((p, i) => (
+                  {problems.map((p, idx) => (
                     <tr key={p.id}>
-                      <td>{i + 1}</td>
-                      <td>{p.title}</td>
-                      <td>{p.points}</td>
-                      <td>{p.timeLimit}s</td>
+                      <td>{idx + 1}</td>
                       <td>
-                        <button
-                          className={styles.btnSmall}
-                          onClick={() => setDebugModal({ ...p })}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className={`${styles.btnSmall} ${styles.btnDanger}`}
-                          onClick={() => deleteDebugProblem(p.id)}
-                        >
-                          Delete
-                        </button>
+                        <strong>{p.title}</strong>
+                      </td>
+                      <td>{p.points} pts</td>
+                      <td>{p.timeLimit}s</td>
+                      <td style={{ maxWidth: '350px' }}>{p.description}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.35rem' }}>
+                          <button
+                            className={styles.btnSecondary}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
+                            onClick={() => setDebugModal({ ...p })}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className={styles.btnDangerOutline}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
+                            onClick={() => deleteDebugProblem(p.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
+                  {problems.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className={styles.emptyState}>
+                        No debugging problems created yet.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
-              {debugProblems.length === 0 && <p className={styles.empty}>No problems yet.</p>}
             </div>
-
-            {debugModal !== null && (
-              <Modal
-                title={debugModal.id ? 'Edit Problem' : 'Add Problem'}
-                onClose={() => setDebugModal(null)}
-              >
-                <div className={styles.formGrid}>
-                  <label>
-                    Title
-                    <input
-                      className={styles.input}
-                      value={debugModal.title || ''}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, title: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Points
-                    <input
-                      className={styles.input}
-                      type="number"
-                      value={debugModal.points ?? 100}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, points: +e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Time Limit (seconds)
-                    <input
-                      className={styles.input}
-                      type="number"
-                      value={debugModal.timeLimit ?? 5}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, timeLimit: +e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className={styles.fullWidth}>
-                    Description
-                    <textarea
-                      className={styles.textarea}
-                      rows={3}
-                      value={debugModal.description || ''}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, description: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className={styles.fullWidth}>
-                    Buggy C Code
-                    <textarea
-                      className={styles.textareaCode}
-                      rows={10}
-                      value={debugModal.buggyCode || ''}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, buggyCode: e.target.value }))
-                      }
-                    />
-                  </label>
-                  <label className={styles.fullWidth}>
-                    Expected Output
-                    <textarea
-                      className={styles.textarea}
-                      rows={2}
-                      value={debugModal.expectedOutput || ''}
-                      onChange={(e) =>
-                        setDebugModal((p) => ({ ...p!, expectedOutput: e.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-                <div className={styles.modalActions}>
-                  <button className={styles.btnSecondary} onClick={() => setDebugModal(null)}>
-                    Cancel
-                  </button>
-                  <button className={styles.btnPrimary} onClick={saveDebugProblem}>
-                    Save
-                  </button>
-                </div>
-              </Modal>
-            )}
           </div>
         )}
 
-        {/* ── STUDENTS TAB ──────────────────────────────────────────── */}
+        {/* ── TAB 5: STUDENTS DIRECTORY ────────────────────────────────────── */}
         {activeTab === 'students' && (
-          <div>
-            <div className={styles.tabHeader}>
-              <h2 className={styles.pageTitle}>Registered Students ({students.length})</h2>
-              <button className={styles.btnPrimary} onClick={() => setStudentModal(true)}>
-                + Add Student
-              </button>
+          <div className={styles.panelCard}>
+            <div className={styles.panelHeader}>
+              <div className={styles.panelTitle}>
+                <span>👥 Registered Students ({students.length})</span>
+              </div>
+              <div className={styles.panelActions}>
+                <button className={styles.btnPrimary} onClick={() => setStudentModal(true)}>
+                  + Add Student
+                </button>
+              </div>
             </div>
-            <div className={styles.tableWrap}>
+
+            <div className={styles.tableWrapper}>
               <table className={styles.table}>
                 <thead>
                   <tr>
+                    <th style={{ width: '60px' }}>#</th>
                     <th>Roll No</th>
                     <th>Name</th>
-                    <th>Joined</th>
-                    <th>Actions</th>
+                    <th>Registration Date</th>
+                    <th style={{ width: '100px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((s) => (
+                  {students.map((s, idx) => (
                     <tr key={s.id}>
+                      <td>{idx + 1}</td>
                       <td>
                         <code>{s.rollNo}</code>
                       </td>
-                      <td>{s.name}</td>
+                      <td>
+                        <strong>{s.name}</strong>
+                      </td>
                       <td>{new Date(s.createdAt).toLocaleDateString()}</td>
                       <td>
                         <button
-                          className={`${styles.btnSmall} ${styles.btnDanger}`}
+                          className={styles.btnDangerOutline}
+                          style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
                           onClick={() => deleteStudent(s.id)}
                         >
                           Delete
@@ -1656,164 +1470,620 @@ export default function AdminPage() {
                       </td>
                     </tr>
                   ))}
+                  {students.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className={styles.emptyState}>
+                        No students enrolled yet.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
-              {students.length === 0 && <p className={styles.empty}>No students registered yet.</p>}
-            </div>
-
-            {studentModal && (
-              <Modal title="Add Student" onClose={() => setStudentModal(false)}>
-                <div className={styles.formGrid}>
-                  <label>
-                    Roll Number
-                    <input
-                      className={styles.input}
-                      value={newStudent.rollNo}
-                      placeholder="e.g. CS061"
-                      onChange={(e) =>
-                        setNewStudent((p) => ({ ...p, rollNo: e.target.value.toUpperCase() }))
-                      }
-                    />
-                  </label>
-                  <label>
-                    Full Name
-                    <input
-                      className={styles.input}
-                      value={newStudent.name}
-                      onChange={(e) => setNewStudent((p) => ({ ...p, name: e.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Password
-                    <input
-                      className={styles.input}
-                      type="password"
-                      value={newStudent.password}
-                      onChange={(e) => setNewStudent((p) => ({ ...p, password: e.target.value }))}
-                    />
-                  </label>
-                </div>
-                <div className={styles.modalActions}>
-                  <button className={styles.btnSecondary} onClick={() => setStudentModal(false)}>
-                    Cancel
-                  </button>
-                  <button className={styles.btnPrimary} onClick={addStudent}>
-                    Add
-                  </button>
-                </div>
-              </Modal>
-            )}
-          </div>
-        )}
-
-        {/* ── RESULTS TAB ───────────────────────────────────────────── */}
-        {activeTab === 'results' && (
-          <div>
-            <h2 className={styles.pageTitle}>Leaderboards &amp; Standings</h2>
-            <div className={styles.resultsGrid}>
-              {['DEBUGGING', 'TECHNICAL_QUIZ'].map((type) => {
-                const rows = (results[type] || []) as Array<{
-                  rollNo: string;
-                  name: string;
-                  totalPoints: number;
-                  round1Score?: number;
-                  round2Score?: number;
-                  isQualified?: boolean;
-                  finalRank?: number;
-                }>;
-                return (
-                  <div key={type} className={styles.leaderboard}>
-                    <h3 className={styles.leaderboardTitle}>{type.replace('_', ' ')}</h3>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Rank</th>
-                          <th>Roll No</th>
-                          <th>Name</th>
-                          <th>Points</th>
-                          {type === 'TECHNICAL_QUIZ' && <th>Status</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((r, i) => (
-                          <tr key={r.rollNo}>
-                            <td>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</td>
-                            <td>
-                              <code>{r.rollNo}</code>
-                            </td>
-                            <td>{r.name}</td>
-                            <td>
-                              <strong>{r.totalPoints}</strong>
-                            </td>
-                            {type === 'TECHNICAL_QUIZ' && (
-                              <td>
-                                {r.isQualified ? (
-                                  <span className={styles.qualifiedBadge}>Finalist</span>
-                                ) : (
-                                  <span>Round 1</span>
-                                )}
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                        {rows.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className={styles.empty}>
-                              No submissions recorded yet
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                );
-              })}
             </div>
           </div>
         )}
 
-        {/* ── APPEARANCE TAB ────────────────────────────────────────── */}
+        {/* ── TAB 6: THEME SETTINGS ────────────────────────────────────────── */}
         {activeTab === 'appearance' && (
-          <div>
-            <h2 className={styles.pageTitle}>Appearance &amp; Theme</h2>
-            <div className={styles.themeGrid}>
-              {themes.map((t) => (
-                <div
-                  key={t.id}
-                  className={`${styles.themeCard} ${t.isActive ? styles.themeCardActive : ''}`}
-                >
-                  <div className={styles.themePreview}>
-                    <div
-                      style={{
-                        background: t.primaryColor,
-                        flex: 1,
-                        borderRadius: '4px 0 0 4px',
-                      }}
-                    />
-                    <div style={{ background: t.secondaryColor, flex: 1 }} />
-                    <div style={{ background: t.accentColor, flex: 1 }} />
-                    <div
-                      style={{
-                        background: t.backgroundColor,
-                        flex: 1,
-                        borderRadius: '0 4px 4px 0',
-                      }}
-                    />
+          <div className={styles.panelCard}>
+            <div className={styles.panelHeader}>
+              <div className={styles.panelTitle}>
+                <span>🎨 System Display &amp; Themes</span>
+              </div>
+            </div>
+
+            <div style={{ padding: '1.25rem' }}>
+              <div className={styles.cardGrid}>
+                {themes.map((t) => (
+                  <div key={t.id} className={styles.itemCard}>
+                    <div className={styles.itemCardHeader}>
+                      <div>
+                        <div className={styles.itemTitle}>{t.name}</div>
+                        <div className={styles.itemSub}>
+                          Primary: {t.primaryColor} • Accent: {t.accentColor}
+                        </div>
+                      </div>
+                      {t.isActive ? (
+                        <span className={styles.statusQualified}>Active</span>
+                      ) : (
+                        <button
+                          className={styles.btnSecondary}
+                          style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
+                          onClick={() => activateTheme(t.id)}
+                        >
+                          Activate
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className={styles.themeName}>{t.name}</div>
-                  {t.isActive ? (
-                    <span className={styles.activeLabel}>✓ Active</span>
-                  ) : (
-                    <button className={styles.btnSmall} onClick={() => activateTheme(t.id)}>
-                      Activate
-                    </button>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         )}
       </main>
+
+      {/* ── QUALIFY TOP 10 CONFIRMATION MODAL ──────────────────────────────── */}
+      {qualifyModalOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>👑 Confirm Round 1 Qualifiers (Top 10)</span>
+              <button
+                className={styles.modalCloseBtn}
+                onClick={() => setQualifyModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className={styles.modalBody}>
+              <div className={styles.modalNotice}>
+                <strong>⚠️ Promotion Lock-in:</strong> The 10 students listed below will be granted
+                exclusive access to participate in <strong>Round 2: Championship</strong>. All other
+                participants will be locked to the eliminated results screen.
+              </div>
+
+              <div className={styles.tableWrapper}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: '50px' }}>Rank</th>
+                      <th>Roll No</th>
+                      <th>Student Name</th>
+                      <th>Score</th>
+                      <th>Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {qualifyPreviewList.map((q, idx) => (
+                      <tr key={q.id || idx}>
+                        <td>
+                          <span
+                            className={`${styles.rankBadge} ${
+                              idx === 0
+                                ? styles.rankGold
+                                : idx === 1
+                                ? styles.rankSilver
+                                : idx === 2
+                                ? styles.rankBronze
+                                : ''
+                            }`}
+                          >
+                            {idx + 1}
+                          </span>
+                        </td>
+                        <td>
+                          <strong>{q.user?.rollNo}</strong>
+                        </td>
+                        <td>{q.user?.name}</td>
+                        <td>
+                          <strong style={{ color: 'var(--admin-red)' }}>
+                            {q.round1Score} pts
+                          </strong>
+                        </td>
+                        <td>{q.round1Time}s</td>
+                      </tr>
+                    ))}
+                    {qualifyPreviewList.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={styles.emptyState}>
+                          No qualifying submissions detected.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className={styles.modalFooter}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => setQualifyModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className={styles.btnPrimary}
+                disabled={actionLoading || qualifyPreviewList.length === 0}
+                onClick={confirmQualifyRound1}
+              >
+                {actionLoading ? 'Locking In...' : '✓ Confirm Top 10 & Enable Round 2'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CHALLENGE MODAL ──────────────────────────────────────────────── */}
+      {challengeModal !== null && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>
+                {challengeModal.id ? 'Edit Challenge Stage' : 'New Challenge Stage'}
+              </span>
+              <button
+                className={styles.modalCloseBtn}
+                onClick={() => setChallengeModal(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.formGrid}>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Round</span>
+                  <select
+                    className={styles.select}
+                    value={challengeModal.round ?? 1}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, round: +e.target.value }))
+                    }
+                  >
+                    <option value={1}>Round 1 (Qualifiers)</option>
+                    <option value={2}>Round 2 (Championship Top 10)</option>
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Stage Type</span>
+                  <select
+                    className={styles.select}
+                    value={challengeModal.type || 'RAPID_FIRE'}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, type: e.target.value }))
+                    }
+                  >
+                    <option value="RAPID_FIRE">⚡ Rapid Fire</option>
+                    <option value="GUESS_THE_TECH">🔍 Guess the Tech</option>
+                    <option value="TECH_SHUFFLE">🔀 Tech Shuffle</option>
+                    <option value="PUZZLE_GRID">🧩 Puzzle Grid</option>
+                    <option value="TECH_SHOWDOWN">⚔️ Tech Showdown</option>
+                    <option value="TECH_TODAY">📰 Tech Today</option>
+                    <option value="REAL_OR_FAKE">🎭 Real or Fake</option>
+                    <option value="FINAL_CHALLENGE">👑 Final Challenge</option>
+                  </select>
+                </div>
+
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Title</span>
+                  <input
+                    className={styles.input}
+                    value={challengeModal.title || ''}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, title: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Points</span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    value={challengeModal.points ?? 100}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, points: +e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Subtitle / Description</span>
+                  <input
+                    className={styles.input}
+                    value={challengeModal.subtitle || challengeModal.description || ''}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({
+                        ...p!,
+                        subtitle: e.target.value,
+                        description: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className={styles.modalFooter}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => setChallengeModal(null)}
+              >
+                Cancel
+              </button>
+              <button className={styles.btnPrimary} onClick={saveChallenge}>
+                Save Stage
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── QUESTION MODAL ───────────────────────────────────────────────── */}
+      {quizModal !== null && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>
+                {quizModal.id ? 'Edit Question' : 'Add Question'}
+              </span>
+              <button
+                className={styles.modalCloseBtn}
+                onClick={() => setQuizModal(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.formGrid}>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Round</span>
+                  <select
+                    className={styles.select}
+                    value={quizModal.round ?? selectedRoundFilter}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, round: +e.target.value }))
+                    }
+                  >
+                    <option value={1}>Round 1</option>
+                    <option value={2}>Round 2 (Top 10)</option>
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Stage</span>
+                  <select
+                    className={styles.select}
+                    value={quizModal.challengeId || ''}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, challengeId: e.target.value || null }))
+                    }
+                  >
+                    <option value="">-- General / Any --</option>
+                    {challenges
+                      .filter((c) => c.round === (quizModal.round || selectedRoundFilter))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Type</span>
+                  <select
+                    className={styles.select}
+                    value={quizModal.type || 'MCQ'}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, type: e.target.value }))
+                    }
+                  >
+                    <option value="MCQ">Multiple Choice (MCQ)</option>
+                    <option value="REAL_OR_FAKE">Real or Fake</option>
+                    <option value="SHUFFLE_ORDER">Tech Shuffle Sequence</option>
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Category</span>
+                  <input
+                    className={styles.input}
+                    value={quizModal.category || 'AI'}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, category: e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Question Prompt</span>
+                  <textarea
+                    className={styles.textarea}
+                    rows={3}
+                    value={quizModal.question || ''}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, question: e.target.value }))
+                    }
+                  />
+                </div>
+
+                {quizModal.type !== 'REAL_OR_FAKE' && (
+                  <>
+                    <div className={styles.formGroup}>
+                      <span className={styles.formLabel}>Option A</span>
+                      <input
+                        className={styles.input}
+                        value={quizModal.optionA || ''}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, optionA: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <span className={styles.formLabel}>Option B</span>
+                      <input
+                        className={styles.input}
+                        value={quizModal.optionB || ''}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, optionB: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <span className={styles.formLabel}>Option C</span>
+                      <input
+                        className={styles.input}
+                        value={quizModal.optionC || ''}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, optionC: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <span className={styles.formLabel}>Option D</span>
+                      <input
+                        className={styles.input}
+                        value={quizModal.optionD || ''}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, optionD: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Correct Answer</span>
+                  {quizModal.type === 'REAL_OR_FAKE' ? (
+                    <select
+                      className={styles.select}
+                      value={quizModal.correctAnswer || 'REAL'}
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                      }
+                    >
+                      <option value="REAL">REAL</option>
+                      <option value="FAKE">FAKE</option>
+                    </select>
+                  ) : quizModal.type === 'SHUFFLE_ORDER' ? (
+                    <input
+                      className={styles.input}
+                      value={quizModal.correctAnswer || ''}
+                      placeholder='["1. Step", "2. Step"]'
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                      }
+                    />
+                  ) : (
+                    <select
+                      className={styles.select}
+                      value={quizModal.correctAnswer || 'A'}
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                      }
+                    >
+                      <option value="A">A</option>
+                      <option value="B">B</option>
+                      <option value="C">C</option>
+                      <option value="D">D</option>
+                    </select>
+                  )}
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Points</span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    value={quizModal.points ?? 15}
+                    onChange={(e) =>
+                      setQuizModal((p) => ({ ...p!, points: +e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className={styles.modalFooter}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => setQuizModal(null)}
+              >
+                Cancel
+              </button>
+              <button className={styles.btnPrimary} onClick={saveQuizQuestion}>
+                Save Question
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DEBUG PROBLEM MODAL ──────────────────────────────────────────── */}
+      {debugModal !== null && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>
+                {debugModal.id ? 'Edit Debugging Problem' : 'Add Debugging Problem'}
+              </span>
+              <button
+                className={styles.modalCloseBtn}
+                onClick={() => setDebugModal(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.formGrid}>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Problem Title</span>
+                  <input
+                    className={styles.input}
+                    value={debugModal.title || ''}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, title: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Points</span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    value={debugModal.points ?? 100}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, points: +e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Time Limit (sec)</span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    value={debugModal.timeLimit ?? 5}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, timeLimit: +e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Description</span>
+                  <textarea
+                    className={styles.textarea}
+                    rows={2}
+                    value={debugModal.description || ''}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, description: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Buggy C Code</span>
+                  <textarea
+                    className={styles.textarea}
+                    style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}
+                    rows={6}
+                    value={debugModal.buggyCode || ''}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, buggyCode: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Expected Output</span>
+                  <textarea
+                    className={styles.textarea}
+                    rows={2}
+                    value={debugModal.expectedOutput || ''}
+                    onChange={(e) =>
+                      setDebugModal((p) => ({ ...p!, expectedOutput: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className={styles.modalFooter}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => setDebugModal(null)}
+              >
+                Cancel
+              </button>
+              <button className={styles.btnPrimary} onClick={saveDebugProblem}>
+                Save Problem
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STUDENT MODAL ────────────────────────────────────────────────── */}
+      {studentModal && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>Add Student</span>
+              <button
+                className={styles.modalCloseBtn}
+                onClick={() => setStudentModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <div className={styles.formGrid}>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Roll Number</span>
+                  <input
+                    className={styles.input}
+                    value={newStudent.rollNo}
+                    placeholder="e.g. 23A91A0501"
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, rollNo: e.target.value.toUpperCase() }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Full Name</span>
+                  <input
+                    className={styles.input}
+                    value={newStudent.name}
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, name: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Password</span>
+                  <input
+                    className={styles.input}
+                    type="password"
+                    value={newStudent.password}
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, password: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+            <div className={styles.modalFooter}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => setStudentModal(false)}
+              >
+                Cancel
+              </button>
+              <button className={styles.btnPrimary} onClick={addStudent}>
+                Add Student
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

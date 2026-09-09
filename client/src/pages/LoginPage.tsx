@@ -37,18 +37,44 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
       } else {
         // Determine current event from server
         const eventRes = await api.get<{
-          event: { type: string; id: string } | null;
+          locked?: boolean;
+          reason?: string;
+          event: {
+            type: string;
+            id: string;
+            status: string;
+            round1Status?: string;
+            round2Status?: string;
+            isQualifiedForRound2?: boolean;
+            locked?: boolean;
+          } | null;
         }>('/current-event', {
           headers: { Authorization: `Bearer ${res.data.token}` },
         });
 
         const event = eventRes.data.event;
+        const isLocked = eventRes.data.locked || event?.locked;
+
         if (!event) {
           navigate('/waiting');
+        } else if (isLocked) {
+          navigate('/waiting');
         } else if (event.type === 'DEBUGGING') {
-          navigate('/debugging');
+          if (event.status === 'RUNNING') {
+            navigate('/debugging');
+          } else {
+            navigate('/waiting');
+          }
+        } else if (event.type === 'TECHNICAL_QUIZ') {
+          if (event.round1Status === 'RUNNING') {
+            navigate('/quiz');
+          } else if (event.round2Status === 'RUNNING' && event.isQualifiedForRound2) {
+            navigate('/quiz');
+          } else {
+            navigate('/waiting');
+          }
         } else {
-          navigate('/quiz');
+          navigate('/waiting');
         }
       }
     } catch (err: unknown) {

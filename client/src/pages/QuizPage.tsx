@@ -20,10 +20,14 @@ interface EventData {
   startTime: string;
   endTime: string;
   version: number;
+  durationSeconds?: number;
   currentRound: number;
   round1Status: string;
   round2Status: string;
   isQualifiedForRound2: boolean;
+  locked?: boolean;
+  reason?: string;
+  hasQualifications?: boolean;
   qualification?: {
     isQualified: boolean;
     round1Score: number;
@@ -106,16 +110,42 @@ export default function QuizPage() {
   // ── 1. Fetch current event & check state ──────────────────────────────────
   const loadCurrentEvent = useCallback(async () => {
     try {
-      const res = await api.get<{ event: EventData | null }>('/current-event');
+      const res = await api.get<{
+        event: EventData | null;
+        locked?: boolean;
+        reason?: string;
+      }>('/current-event');
+
       const cur = res.data.event;
+      const isLocked =
+        res.data.locked ||
+        cur?.locked ||
+        (cur?.type === 'TECHNICAL_QUIZ' &&
+          cur?.round1Status === 'FINISHED' &&
+          !cur?.isQualifiedForRound2);
 
       if (!cur) {
         navigate('/waiting');
         return;
       }
 
+      if (isLocked) {
+        navigate('/waiting');
+        return;
+      }
+
       if (cur.type === 'DEBUGGING') {
         navigate('/debugging');
+        return;
+      }
+
+      if (
+        cur.type === 'TECHNICAL_QUIZ' &&
+        cur.round1Status === 'FINISHED' &&
+        cur.isQualifiedForRound2 &&
+        cur.round2Status !== 'RUNNING'
+      ) {
+        navigate('/waiting');
         return;
       }
 
@@ -193,7 +223,6 @@ export default function QuizPage() {
     if (!event) return;
 
     try {
-      // 1. Fetch challenges
       const cRes = await api.get<{ challenges: Challenge[] }>(
         `/events/${event.id}/quiz-challenges?round=${activeRound}`
       );
@@ -203,7 +232,6 @@ export default function QuizPage() {
         setActiveChallengeId(cRes.data.challenges[0].id);
       }
 
-      // 2. Fetch all student answers for this round
       const aRes = await api.get<{ answers: AnswerRecord[] }>(
         `/events/${event.id}/my-answers?round=${activeRound}`
       );
@@ -213,7 +241,6 @@ export default function QuizPage() {
       });
       setAnswers(aMap);
 
-      // 3. Check puzzle status
       const pzRes = await api.get<{ puzzle: { isSolved: boolean } | null }>(
         `/events/${event.id}/my-puzzle`
       );
@@ -256,7 +283,6 @@ export default function QuizPage() {
     fetchQuestions();
   }, [event, currentChallenge, activeRound]);
 
-  // Current question
   const currentQuestion = questions[questionIndex];
   const currentAnswer = currentQuestion ? answers[currentQuestion.id] : undefined;
 
@@ -315,8 +341,6 @@ export default function QuizPage() {
       });
 
       setAnswers((prev) => ({ ...prev, [currentQuestion.id]: res.data.answer }));
-
-      // Refresh challenge progress
       loadChallengesAndAnswers();
     } catch (err: unknown) {
       const msg =
@@ -351,16 +375,89 @@ export default function QuizPage() {
     }
   }
 
-  // ── 7. Render Intermission / Not Qualified Screen ─────────────────────────
+  // ── 7. Challenge-Specific Theme Rendering ─────────────────────────────────
+  const renderChallengeHeader = () => {
+    if (!currentChallenge) return null;
+
+    switch (currentChallenge.type) {
+      case 'RAPID_FIRE':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerRapidFire}`}>
+            <span>⚡ RAPID FIRE — Speed &amp; Accuracy Round</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'GUESS_THE_TECH':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerGuessTech}`}>
+            <span>🔍 GUESS THE TECH — Analyze Clues &amp; Architecture</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'TECH_SHUFFLE':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerTechShuffle}`}>
+            <span>🔀 TECH SHUFFLE — Reorder The Sequence Workflow</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'PUZZLE_GRID':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerPuzzleGrid}`}>
+            <span>🧩 PUZZLE GRID — 3x3 Neural Processor Matrix</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'TECH_SHOWDOWN':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerTechShowdown}`}>
+            <span>⚔️ TECH SHOWDOWN — Head-to-Head Architectural Duel</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'TECH_TODAY':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerTechToday}`}>
+            <span>📰 TECH TODAY — Modern Frameworks &amp; Real-World Tech</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'REAL_OR_FAKE':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerRealOrFake}`}>
+            <span>🎭 REAL OR FAKE — Tech Fact vs AI Hallucination</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      case 'FINAL_CHALLENGE':
+        return (
+          <div className={`${styles.challengeBanner} ${styles.bannerFinalChallenge}`}>
+            <span>👑 FINAL CHALLENGE — Championship Decider</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+      default:
+        return (
+          <div className={styles.challengeBanner}>
+            <span>⚡ {currentChallenge.title}</span>
+            <span>{currentChallenge.points} pts max</span>
+          </div>
+        );
+    }
+  };
+
+  // ── 8. Render Intermission / Not Qualified Screen ─────────────────────────
   if (activeRound === 2 && event && !event.isQualifiedForRound2) {
     return (
       <div className={styles.page}>
-        <header className={styles.header}>
-          <div className={styles.headerLeft}>
-            <h1 className={styles.siteTitle}>SASI Engineers' Day</h1>
-            <span className={styles.eventBadge}>⚡ Technical Quiz</span>
+        <header className={styles.topbar}>
+          <div className={styles.topbarLeft}>
+            <span className={styles.brandTitle}>
+              <span>⚡ SASI</span>
+              <span>// TECHNICAL QUIZ</span>
+            </span>
           </div>
-          <div className={styles.headerRight}>
+          <div className={styles.topbarRight}>
             <ConnectionBadge status={connectionStatus} />
             <button className={styles.logoutBtn} onClick={logout}>
               Logout
@@ -368,17 +465,20 @@ export default function QuizPage() {
           </div>
         </header>
 
-        <div className={styles.intermissionCard}>
-          <div className={styles.intermissionIcon}>🏁</div>
-          <h2 className={styles.intermissionTitle}>Round 1 Completed!</h2>
-          <p className={styles.intermissionMsg}>
+        <div className={styles.standbyCard}>
+          <div className={styles.standbyIcon}>🏁</div>
+          <h2 className={styles.standbyTitle}>Round 1 Completed!</h2>
+          <p className={styles.standbyMsg}>
             Thank you for participating in the SASI Engineers' Day Technical Quiz.
           </p>
-          <div className={styles.intermissionNotice}>
-            <strong>Round 2: Tech Championship</strong> is reserved for the <strong>Top 10 Qualifiers</strong>.
-            Final tournament rankings and certificates will be presented at the closing ceremony!
+          <div className={styles.standbyBadge}>
+            <span>🔒 Round 2 Championship is reserved for Top 10 Qualifiers</span>
           </div>
-          <button className={styles.refreshBtn} onClick={() => window.location.reload()}>
+          <button
+            className={styles.logoutBtn}
+            style={{ padding: '0.5rem 1.25rem', marginTop: '0.5rem' }}
+            onClick={() => window.location.reload()}
+          >
             ↻ Refresh Status
           </button>
         </div>
@@ -388,25 +488,36 @@ export default function QuizPage() {
 
   return (
     <div className={styles.page}>
-      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
-      <header className={styles.header}>
-        <div className={styles.headerLeft}>
-          <h1 className={styles.siteTitle}>SASI Engineers' Day</h1>
-          <span className={styles.eventBadge}>⚡ Technical Quiz</span>
-          <span className={styles.roundBadge}>
-            {activeRound === 1 ? 'Round 1 (60 Participants)' : '🏆 Round 2: Tech Championship (Top 10)'}
+      {/* ── Persistent Top Bar ────────────────────────────────────────────── */}
+      <header className={styles.topbar}>
+        <div className={styles.topbarLeft}>
+          <span className={styles.brandTitle}>
+            <span>⚡ SASI</span>
+            <span>// TECHNICAL QUIZ</span>
+          </span>
+          <span className={styles.eventPill}>
+            {isEventRunning && <span className={styles.liveDot} />}
+            <span>{event?.status || 'STANDBY'}</span>
+          </span>
+          <span className={styles.roundPill}>
+            {activeRound === 1 ? 'Round 1: Qualifiers' : 'Round 2: Championship (Top 10)'}
           </span>
         </div>
 
-        <div className={styles.headerRight}>
-          {event && (
-            <div className={styles.timer}>
-              <span className={styles.timerLabel}>Time Remaining</span>
-              <span className={`${styles.timerValue} ${remaining < 300 ? styles.timerWarning : ''}`}>
-                {isEventRunning ? timeFormatted : event.status}
-              </span>
-            </div>
-          )}
+        <div className={styles.topbarCenter}>
+          <div className={styles.timerBlock}>
+            <span className={styles.timerLabel}>Time:</span>
+            <span
+              className={`${styles.timerValue} ${
+                isEventRunning && remaining < 300 ? styles.timerValueUrgent : ''
+              }`}
+            >
+              {isEventRunning ? timeFormatted : `${Math.floor((event?.durationSeconds || 1800) / 60)}:00`}
+            </span>
+          </div>
+        </div>
+
+        <div className={styles.topbarRight}>
           <ConnectionBadge status={connectionStatus} />
           <button className={styles.logoutBtn} onClick={logout}>
             Logout
@@ -414,9 +525,9 @@ export default function QuizPage() {
         </div>
       </header>
 
-      {/* ── Main Layout ─────────────────────────────────────────────────── */}
+      {/* ── Main Layout ───────────────────────────────────────────────────── */}
       <div className={styles.layout}>
-        {/* ── Left Sidebar: Challenge Stages ────────────────────────────── */}
+        {/* ── Left Sidebar: Challenge Stages ──────────────────────────────── */}
         <aside className={styles.sidebar}>
           <div className={styles.sidebarHeader}>
             <span className={styles.sidebarTitle}>Challenge Stages</span>
@@ -443,7 +554,7 @@ export default function QuizPage() {
                   <div className={styles.challengeBtnTop}>
                     <span className={styles.challengeTitle}>{c.title}</span>
                     <span className={styles.statusPill}>
-                      {isDone ? '✓ Completed' : isActive ? '● In Progress' : `${c.points} pts`}
+                      {isDone ? '✓ Completed' : isActive ? '● Active' : `${c.points} pts`}
                     </span>
                   </div>
                   <div className={styles.challengeSubtitle}>{c.subtitle || c.description}</div>
@@ -453,21 +564,22 @@ export default function QuizPage() {
           </nav>
         </aside>
 
-        {/* ── Main Stage Area ───────────────────────────────────────────── */}
+        {/* ── Main Stage Area ─────────────────────────────────────────────── */}
         <main className={styles.main}>
           {!isEventRunning && (
-            <div className={styles.notRunningBanner}>
-              {event?.status === 'PAUSED' && '⏸ Technical Quiz is paused by Admin. Please wait...'}
+            <div className={styles.statusNotice}>
+              {event?.status === 'PAUSED' && '⏸ Technical Quiz is paused by Admin. Stand by...'}
               {event?.status === 'READY' && '🕐 Round is ready to start. Get ready!'}
               {event?.status === 'FINISHED' &&
                 '🏁 Round has ended. The admin will verify results shortly.'}
-              {event?.status === 'DRAFT' && '🕐 Competition is being set up.'}
+              {event?.status === 'DRAFT' && '🕐 Competition is being initialized.'}
             </div>
           )}
 
           {/* 1. Puzzle Challenge Display */}
           {currentChallenge?.type === 'PUZZLE_GRID' && (
-            <section className={styles.gameSection}>
+            <section className={styles.gameSection} key={currentChallenge.id}>
+              {renderChallengeHeader()}
               <SlidingPuzzle
                 challengeId={currentChallenge.id}
                 points={currentChallenge.points}
@@ -481,7 +593,9 @@ export default function QuizPage() {
 
           {/* 2. Interactive Questions Display */}
           {currentChallenge?.type !== 'PUZZLE_GRID' && currentQuestion && (
-            <section className={styles.gameSection}>
+            <section className={styles.gameSection} key={currentQuestion.id}>
+              {renderChallengeHeader()}
+
               <div className={styles.questionHeader}>
                 <div className={styles.questionMeta}>
                   <span className={styles.categoryBadge}>{currentQuestion.category}</span>
@@ -489,7 +603,7 @@ export default function QuizPage() {
                     Question {questionIndex + 1} of {questions.length}
                   </span>
                 </div>
-                <span className={styles.pointsBadge}>{currentQuestion.points} points</span>
+                <span className={styles.pointsBadge}>{currentQuestion.points} pts</span>
               </div>
 
               {/* Visual image if provided */}
@@ -506,7 +620,7 @@ export default function QuizPage() {
               {/* Question Text */}
               <h2 className={styles.questionPrompt}>{currentQuestion.question}</h2>
 
-              {/* Choice Input Types */}
+              {/* Input Type Variants */}
               {currentQuestion.type === 'SHUFFLE_ORDER' ? (
                 /* Tech Shuffle Sequence Sorter */
                 <TechShuffle
@@ -521,7 +635,7 @@ export default function QuizPage() {
                   disabled={!isEventRunning || submitting}
                 />
               ) : currentQuestion.type === 'REAL_OR_FAKE' ? (
-                /* Real or Fake Big Toggle */
+                /* Real or Fake Big 2-Button Choice */
                 <div className={styles.realFakeGrid}>
                   {['REAL', 'FAKE'].map((choice) => {
                     const isSelected = selectedOption === choice;
@@ -539,7 +653,7 @@ export default function QuizPage() {
                         disabled={!isEventRunning || submitting}
                       >
                         <span className={styles.rfIcon}>{choice === 'REAL' ? '🟢' : '🔴'}</span>
-                        <span className={styles.rfLabel}>{choice}</span>
+                        <span>{choice}</span>
                       </button>
                     );
                   })}
@@ -589,9 +703,9 @@ export default function QuizPage() {
                   ← Previous
                 </button>
 
-                <div className={styles.centerStatus}>
+                <div>
                   {currentAnswer ? (
-                    <span className={styles.savedStatus}>✓ Answer Recorded</span>
+                    <span className={styles.savedStatus}>✓ Answer Saved</span>
                   ) : (
                     <span className={styles.unansweredStatus}>Select an answer to record</span>
                   )}
@@ -630,9 +744,9 @@ export default function QuizPage() {
           )}
 
           {currentChallenge?.type !== 'PUZZLE_GRID' && questions.length === 0 && (
-            <div className={styles.emptyState}>
-              <h3>No questions configured for this challenge stage yet.</h3>
-              <p>Please select another challenge from the left sidebar.</p>
+            <div className={styles.standbyCard}>
+              <h3 className={styles.standbyTitle}>No questions configured for this challenge stage yet.</h3>
+              <p className={styles.standbyMsg}>Please select another challenge from the left sidebar.</p>
             </div>
           )}
         </main>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { useAuth } from '../state/AuthContext';
@@ -16,6 +16,7 @@ interface Event {
   status: string;
   startTime: string;
   endTime: string;
+  durationSeconds: number;
   version: number;
 }
 
@@ -31,9 +32,9 @@ interface Problem {
 }
 
 interface SubmissionResult {
-  result: string;
-  compileOutput: string;
-  runOutput: string;
+  result: 'ACCEPTED' | 'WRONG_ANSWER' | 'COMPILE_ERROR' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR';
+  compileOutput?: string;
+  runOutput?: string;
   pointsAwarded: number;
   passedCases: number;
   totalCases: number;
@@ -46,7 +47,7 @@ interface RunResult {
 }
 
 export default function DebuggingPage() {
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
   const navigate = useNavigate();
   const connectionStatus = useConnectionStatus();
 
@@ -58,48 +59,50 @@ export default function DebuggingPage() {
 
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null);
 
-  const { formatted: timeFormatted, remaining } = useTimer(event?.status === 'RUNNING' ? event.endTime : null);
+  const isEventRunning = event?.status === 'RUNNING';
+  const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
 
   // ── Fetch current event and problems ─────────────────────────────────────
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await api.get<{ event: Event | null }>('/current-event');
-        const currentEvent = res.data.event;
+  const loadEventAndProblems = useCallback(async () => {
+    try {
+      const res = await api.get<{ event: Event | null }>('/current-event');
+      const currentEvent = res.data.event;
 
-        if (!currentEvent) {
-          navigate('/waiting');
-          return;
-        }
-
-        if (currentEvent.type !== 'DEBUGGING') {
-          navigate('/quiz');
-          return;
-        }
-
-        setEvent(currentEvent);
-        setEventVersion(currentEvent.version);
-
-        const probRes = await api.get<{ problems: Problem[] }>(
-          `/events/${currentEvent.id}/debugging-problems`
-        );
-        setProblems(probRes.data.problems);
-        if (probRes.data.problems.length > 0) {
-          setCode(probRes.data.problems[0].buggyCode);
-        }
-
-        // Join socket room
-        const socket = getSocket();
-        socket.emit('join:event', currentEvent.id);
-      } catch {
-        navigate('/');
+      if (!currentEvent) {
+        navigate('/waiting');
+        return;
       }
+
+      if (currentEvent.type !== 'DEBUGGING') {
+        navigate('/quiz');
+        return;
+      }
+
+      setEvent(currentEvent);
+      setEventVersion(currentEvent.version);
+
+      const probRes = await api.get<{ problems: Problem[] }>(
+        `/events/${currentEvent.id}/debugging-problems`
+      );
+      setProblems(probRes.data.problems);
+      if (probRes.data.problems.length > 0) {
+        setCode(probRes.data.problems[0].buggyCode);
+      }
+
+      const socket = getSocket();
+      socket.emit('join:event', currentEvent.id);
+    } catch {
+      navigate('/');
     }
-    load();
   }, [navigate]);
+
+  useEffect(() => {
+    loadEventAndProblems();
+  }, [loadEventAndProblems]);
 
   // ── Socket.IO: event state changes ───────────────────────────────────────
   useEffect(() => {
@@ -114,31 +117,30 @@ export default function DebuggingPage() {
       version: number;
     }) {
       if (!event || data.eventId !== event.id) return;
-      // Version guard: ignore stale events
       if (data.version <= eventVersion) return;
 
       setEventVersion(data.version);
       setEvent((prev) =>
-        prev ? { ...prev, status: data.status, endTime: data.endTime, startTime: data.startTime } : prev
+        prev
+          ? {
+              ...prev,
+              status: data.status,
+              endTime: data.endTime,
+              startTime: data.startTime,
+              version: data.version,
+            }
+          : prev
       );
 
-      // If event ended, update UI
-      if (data.status === 'FINISHED') {
-        setEvent((prev) => prev ? { ...prev, status: 'FINISHED' } : prev);
+      if (data.type === 'TECHNICAL_QUIZ') {
+        navigate('/quiz');
       }
     }
 
-    // On reconnect, re-fetch authoritative state
     async function handleReconnect() {
       if (!event) return;
-      try {
-        const res = await api.get<{ event: Event }>(`/events/${event.id}`);
-        setEvent(res.data.event);
-        setEventVersion(res.data.event.version);
-        socket.emit('join:event', event.id);
-      } catch {
-        // Ignore
-      }
+      await loadEventAndProblems();
+      socket.emit('join:event', event.id);
     }
 
     socket.on('event.state_changed', handleStateChange);
@@ -148,29 +150,7 @@ export default function DebuggingPage() {
       socket.off('event.state_changed', handleStateChange);
       socket.off('connect', handleReconnect);
     };
-  }, [event, eventVersion]);
-
-  // ── Auto-navigate when event type changes (to Quiz) ──────────────────────
-  useEffect(() => {
-    if (!event) return;
-
-    async function checkEventTransition() {
-      try {
-        const res = await api.get<{ event: Event | null }>('/current-event');
-        const cur = res.data.event;
-        if (!cur) return;
-        if (cur.type === 'TECHNICAL_QUIZ') {
-          navigate('/quiz');
-        }
-      } catch {
-        // Ignore
-      }
-    }
-
-    // Check every 30 seconds for event transitions
-    const interval = setInterval(checkEventTransition, 30000);
-    return () => clearInterval(interval);
-  }, [event, navigate]);
+  }, [event, eventVersion, loadEventAndProblems, navigate]);
 
   function selectProblem(index: number) {
     setSelectedIndex(index);
@@ -190,52 +170,110 @@ export default function DebuggingPage() {
       setRunResult({
         success: false,
         output: '',
-        error: (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Run failed',
+        error:
+          (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+          'Execution failed or timed out (5.0s limit)',
       });
     } finally {
       setRunning(false);
     }
   }
 
-  async function handleSubmit() {
-    if (!event || event.status !== 'RUNNING' || !problems[selectedIndex]) return;
+  async function confirmAndSubmit() {
+    if (!event || event.status !== 'RUNNING' || !problems[selectedIndex] || submitting) return;
     setSubmitting(true);
     setSubmitResult(null);
+    setConfirmModalOpen(false);
+
     try {
-      const res = await api.post<{ submission: SubmissionResult }>(`/events/${event.id}/submit-code`, {
-        problemId: problems[selectedIndex].id,
-        code,
-      });
+      const res = await api.post<{ submission: SubmissionResult }>(
+        `/events/${event.id}/submit-code`,
+        {
+          problemId: problems[selectedIndex].id,
+          code,
+        }
+      );
       setSubmitResult(res.data.submission);
     } catch (err: unknown) {
-      alert(
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Submission failed'
-      );
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Submission failed';
+      alert(msg);
     } finally {
       setSubmitting(false);
     }
   }
 
   const currentProblem = problems[selectedIndex];
-  const eventActive = event?.status === 'RUNNING';
+
+  const renderVerdictBadge = (result: SubmissionResult['result']) => {
+    switch (result) {
+      case 'ACCEPTED':
+        return (
+          <span className={`${styles.verdictBadge} ${styles.verdictAccepted}`}>
+            ✓ ACCEPTED ({submitResult?.pointsAwarded} pts)
+          </span>
+        );
+      case 'WRONG_ANSWER':
+        return (
+          <span className={`${styles.verdictBadge} ${styles.verdictWrongAnswer}`}>
+            ✗ WRONG ANSWER
+          </span>
+        );
+      case 'COMPILE_ERROR':
+        return (
+          <span className={`${styles.verdictBadge} ${styles.verdictCompileError}`}>
+            ⚠️ COMPILE ERROR
+          </span>
+        );
+      case 'TIME_LIMIT_EXCEEDED':
+        return (
+          <span className={`${styles.verdictBadge} ${styles.verdictTimeLimit}`}>
+            ⏱ TIME LIMIT EXCEEDED (5s Limit)
+          </span>
+        );
+      case 'RUNTIME_ERROR':
+        return (
+          <span className={`${styles.verdictBadge} ${styles.verdictRuntimeError}`}>
+            💥 RUNTIME ERROR
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className={styles.page}>
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className={styles.header}>
-        <div className={styles.headerLeft}>
-          <h1 className={styles.siteTitle}>SASI Engineers' Day</h1>
-          <span className={styles.eventBadge}>Debugging Competition</span>
+      {/* ── Persistent Top Bar ────────────────────────────────────────────── */}
+      <header className={styles.topbar}>
+        <div className={styles.topbarLeft}>
+          <span className={styles.brandTitle}>
+            <span>⚡ SASI</span>
+            <span>// C DEBUGGING ARENA</span>
+          </span>
+          <span className={styles.eventPill}>
+            {isEventRunning && <span className={styles.liveDot} />}
+            <span>{event?.status || 'STANDBY'}</span>
+          </span>
         </div>
-        <div className={styles.headerRight}>
-          {event && (
-            <div className={styles.timer}>
-              <span className={styles.timerLabel}>Time Remaining</span>
-              <span className={`${styles.timerValue} ${remaining < 300 ? styles.timerWarning : ''}`}>
-                {event.status === 'RUNNING' ? timeFormatted : event.status}
-              </span>
-            </div>
-          )}
+
+        <div className={styles.topbarCenter}>
+          <div className={styles.timerBlock}>
+            <span className={styles.timerLabel}>Time Remaining:</span>
+            <span
+              className={`${styles.timerValue} ${
+                isEventRunning && remaining < 300 ? styles.timerValueUrgent : ''
+              }`}
+            >
+              {isEventRunning
+                ? timeFormatted
+                : `${Math.floor((event?.durationSeconds || 1800) / 60)}:00`}
+            </span>
+          </div>
+        </div>
+
+        <div className={styles.topbarRight}>
           <ConnectionBadge status={connectionStatus} />
           <button className={styles.logoutBtn} onClick={logout}>
             Logout
@@ -243,11 +281,11 @@ export default function DebuggingPage() {
         </div>
       </header>
 
-      {/* ── Main Layout ─────────────────────────────────────────────────── */}
+      {/* ── Main Layout ───────────────────────────────────────────────────── */}
       <div className={styles.layout}>
-        {/* Problem Sidebar */}
+        {/* Left Sidebar: Problem Selector */}
         <aside className={styles.sidebar}>
-          <h2 className={styles.sidebarTitle}>Problems</h2>
+          <div className={styles.sidebarTitle}>Problem Statements</div>
           <ul className={styles.problemList}>
             {problems.map((p, i) => (
               <li key={p.id}>
@@ -256,121 +294,190 @@ export default function DebuggingPage() {
                   onClick={() => selectProblem(i)}
                 >
                   <span className={styles.problemNum}>#{i + 1}</span>
-                  <span className={styles.problemTitle}>{p.title}</span>
-                  <span className={styles.problemPoints}>{p.points}pts</span>
+                  <span className={styles.problemTitleText}>{p.title}</span>
+                  <span className={styles.problemPoints}>{p.points}p</span>
                 </button>
               </li>
             ))}
           </ul>
         </aside>
 
-        {/* Main Panel */}
-        <main className={styles.main}>
-          {!eventActive && (
-            <div className={styles.notRunning}>
-              {event?.status === 'PAUSED' && '⏸ Competition is paused. Please wait...'}
-              {event?.status === 'READY' && '🕐 Competition has not started yet.'}
-              {event?.status === 'FINISHED' && '🏁 Competition has ended. Thank you for participating!'}
-              {event?.status === 'DRAFT' && '🕐 Competition is being prepared.'}
-            </div>
-          )}
+        {/* Split View */}
+        <div className={styles.mainSplit}>
+          {/* ── Left Column: Problem Details & Constraints ────────────────── */}
+          <div className={styles.problemColumn}>
+            {currentProblem ? (
+              <>
+                <div className={styles.card}>
+                  <div className={styles.problemHeader}>
+                    <h2 className={styles.problemTitle}>
+                      #{selectedIndex + 1}. {currentProblem.title}
+                    </h2>
+                    <span className={styles.pointsBadge}>{currentProblem.points} Points</span>
+                  </div>
 
-          {currentProblem && (
-            <>
-              {/* Problem Description */}
-              <section className={styles.problemSection}>
-                <h2 className={styles.problemH2}>
-                  Problem {selectedIndex + 1}: {currentProblem.title}
-                  <span className={styles.pts}>{currentProblem.points} points</span>
-                </h2>
-                <p className={styles.description}>{currentProblem.description}</p>
-                <div className={styles.expectedOutput}>
-                  <strong>Expected Output:</strong>
-                  <pre className={styles.pre}>{currentProblem.expectedOutput}</pre>
-                </div>
-              </section>
+                  <p className={styles.description}>{currentProblem.description}</p>
 
-              {/* Code Editor */}
-              <section className={styles.editorSection}>
-                <div className={styles.editorHeader}>
-                  <span className={styles.langBadge}>C</span>
-                  <span className={styles.editorHint}>Edit the code below to fix the bug</span>
-                </div>
-                <div className={styles.editorContainer}>
-                  <Editor
-                    height="380px"
-                    language="c"
-                    value={code}
-                    onChange={(v) => setCode(v || '')}
-                    theme="vs-dark"
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 14,
-                      fontFamily: 'Cascadia Code, Fira Code, Consolas, monospace',
-                      scrollBeyondLastLine: false,
-                      wordWrap: 'on',
-                      readOnly: !eventActive,
-                    }}
-                  />
+                  <div className={styles.outputBlock}>
+                    <span className={styles.sectionLabel}>Expected Output</span>
+                    <pre className={styles.codeBlock}>{currentProblem.expectedOutput}</pre>
+                  </div>
                 </div>
 
-                <div className={styles.actions}>
+                <div className={styles.constraintsNote}>
+                  <span>⏱</span>
+                  <span>
+                    <strong>Sandbox Execution Limit:</strong> Each execution is capped at 5.0 seconds.
+                    Infinite loops will trigger a Time Limit Exceeded verdict.
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className={styles.card}>
+                <p>No problem selected.</p>
+              </div>
+            )}
+          </div>
+
+          {/* ── Right Column: Monaco Code Editor & Console Output ──────────── */}
+          <div className={styles.editorColumn}>
+            <div className={styles.editorCard}>
+              <div className={styles.editorHeader}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className={styles.langBadge}>C / GCC</span>
+                  <span style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8' }}>
+                    Fix the buggy code to match expected output
+                  </span>
+                </div>
+                <div className={styles.timeoutNotice}>
+                  <span>⏱ 5.0s Timeout</span>
+                </div>
+              </div>
+
+              <div className={styles.editorContainer}>
+                <Editor
+                  height="340px"
+                  language="c"
+                  value={code}
+                  onChange={(v) => setCode(v || '')}
+                  theme="vs-dark"
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    fontFamily: 'Cascadia Code, Fira Code, Consolas, monospace',
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                    readOnly: !isEventRunning,
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+
+              <div className={styles.actionBar}>
+                <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8' }}>
+                  {submitting ? 'Processing submission with test cases...' : 'Ready to test or submit'}
+                </div>
+                <div className={styles.actionBtnGroup}>
                   <button
                     className={styles.runBtn}
                     onClick={handleRun}
-                    disabled={!eventActive || running}
+                    disabled={!isEventRunning || running || submitting}
                   >
                     {running ? '▶ Running...' : '▶ Run Code'}
                   </button>
                   <button
                     className={styles.submitBtn}
-                    onClick={handleSubmit}
-                    disabled={!eventActive || submitting}
+                    onClick={() => setConfirmModalOpen(true)}
+                    disabled={!isEventRunning || submitting}
                   >
-                    {submitting ? 'Submitting...' : '✓ Submit'}
+                    {submitting ? 'Submitting...' : '✓ Submit Solution'}
                   </button>
                 </div>
-              </section>
+              </div>
+            </div>
 
-              {/* Output Panel */}
+            {/* Console / Terminal Results Panel */}
+            <div className={styles.consoleCard}>
+              <div className={styles.consoleHeader}>
+                <span className={styles.consoleTitle}>Console Output &amp; Verdicts</span>
+                {submitResult && renderVerdictBadge(submitResult.result)}
+              </div>
+
+              {/* Run Code Output */}
               {runResult && (
-                <section className={styles.outputSection}>
-                  <h3 className={styles.outputTitle}>
-                    {runResult.success ? '✓ Output' : '✗ Error'}
-                  </h3>
-                  <pre className={`${styles.output} ${runResult.success ? styles.outputOk : styles.outputErr}`}>
-                    {runResult.output || runResult.error || '(no output)'}
+                <div>
+                  <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8', marginBottom: '0.25rem' }}>
+                    {runResult.success ? '✓ Preview Output (stdout):' : '✗ Execution Error (stderr):'}
+                  </div>
+                  <pre className={styles.consoleTerminal}>
+                    {runResult.output || runResult.error || '(no stdout output)'}
                   </pre>
-                </section>
+                </div>
               )}
 
+              {/* Submit Code Output */}
               {submitResult && (
-                <section className={styles.outputSection}>
-                  <h3 className={`${styles.outputTitle} ${styles[submitResult.result.toLowerCase().replace(/_/g, '-')]}`}>
-                    {submitResult.result === 'ACCEPTED' && '🎉 ACCEPTED'}
-                    {submitResult.result === 'WRONG_ANSWER' && '✗ WRONG ANSWER'}
-                    {submitResult.result === 'COMPILE_ERROR' && '✗ COMPILE ERROR'}
-                    {submitResult.result === 'TIME_LIMIT_EXCEEDED' && '⏱ TIME LIMIT EXCEEDED'}
-                    {submitResult.result === 'RUNTIME_ERROR' && '✗ RUNTIME ERROR'}
-                    {submitResult.result === 'ACCEPTED' && ` — ${submitResult.pointsAwarded} points`}
-                    {submitResult.totalCases > 0 &&
-                      ` (${submitResult.passedCases}/${submitResult.totalCases} test cases)`}
-                  </h3>
+                <div>
+                  <div style={{ fontSize: 'var(--font-size-micro)', color: '#94a3b8', marginBottom: '0.25rem' }}>
+                    {submitResult.result === 'ACCEPTED'
+                      ? `Passed all test cases (${submitResult.passedCases}/${submitResult.totalCases})`
+                      : `Evaluation Output (${submitResult.passedCases}/${submitResult.totalCases} test cases passed):`}
+                  </div>
                   {(submitResult.compileOutput || submitResult.runOutput) && (
-                    <pre className={`${styles.output} ${submitResult.result === 'ACCEPTED' ? styles.outputOk : styles.outputErr}`}>
+                    <pre className={styles.consoleTerminal}>
                       {submitResult.compileOutput || submitResult.runOutput}
                     </pre>
                   )}
-                </section>
+                </div>
               )}
-            </>
-          )}
 
-          {problems.length === 0 && (
-            <div className={styles.empty}>No problems available yet.</div>
-          )}
-        </main>
+              {!runResult && !submitResult && (
+                <div style={{ fontSize: 'var(--font-size-micro)', color: '#64748b', fontStyle: 'italic' }}>
+                  Run your code to test against sample outputs, or click Submit when ready.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* ── Confirm Submit Modal ──────────────────────────────────────────── */}
+      {confirmModalOpen && (
+        <div className={styles.modalOverlay}>
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <span className={styles.modalTitle}>Confirm Submission</span>
+              <button className={styles.modalCloseBtn} onClick={() => setConfirmModalOpen(false)}>
+                ×
+              </button>
+            </div>
+            <div className={styles.modalBody}>
+              <p>
+                Are you ready to submit your solution for{' '}
+                <strong>
+                  Problem #{selectedIndex + 1}: {currentProblem?.title}
+                </strong>
+                ?
+              </p>
+              <p style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
+                Your code will be evaluated against all hidden server test cases.
+              </p>
+            </div>
+            <div className={styles.modalFooter}>
+              <button className={styles.btnSecondary} onClick={() => setConfirmModalOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className={styles.btnPrimary}
+                disabled={submitting}
+                onClick={confirmAndSubmit}
+              >
+                {submitting ? 'Submitting...' : 'Confirm & Submit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
