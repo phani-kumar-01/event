@@ -123,8 +123,10 @@ export function compileAndRunC(
 
     await fs.mkdir(tempDir, { recursive: true }).catch(() => {});
 
+    const isWindows = process.platform === 'win32';
+    const binExt = isWindows ? '.exe' : '.out';
     const srcPath = path.join(tempDir, `source_${id}.c`);
-    const binPath = path.join(tempDir, `exec_${id}.out`);
+    const binPath = path.join(tempDir, `exec_${id}${binExt}`);
 
     const cleanup = async () => {
       await Promise.all([
@@ -146,19 +148,29 @@ export function compileAndRunC(
     }
 
     // 3. Compile Source Code (Capped at 5.0s compilation)
-    const compileResult = await new Promise<{ error: Error | null; stderr: string }>((res) => {
+    const compileResult = await new Promise<{ error: Error | null; stderr: string; stdout: string }>((res) => {
       const compileCmd = `gcc "${srcPath}" -o "${binPath}" -lm -Wall -w`;
-      exec(compileCmd, { timeout: 5000, maxBuffer: 10 * 1024 }, (err, _stdout, stderr) => {
-        res({ error: err, stderr });
+      exec(compileCmd, { timeout: 5000, maxBuffer: 10 * 1024 }, (err, stdout, stderr) => {
+        res({ error: err, stderr, stdout });
       });
     });
 
     if (compileResult.error) {
       await cleanup();
+      const errMsg = compileResult.stderr || compileResult.error.message || 'Compilation failed';
+      const isGccMissing =
+        errMsg.toLowerCase().includes('not recognized') ||
+        errMsg.toLowerCase().includes('command not found') ||
+        (compileResult.error as any)?.code === 'ENOENT';
+
+      const diagnosticOutput = isGccMissing
+        ? 'GCC Compiler Error: "gcc" command not found in system PATH. Ensure GCC / MinGW is installed on the host system.'
+        : errMsg;
+
       return {
         success: false,
         error: 'COMPILATION_ERROR',
-        output: compileResult.stderr || compileResult.error.message || 'Compilation failed',
+        output: diagnosticOutput,
         timeMs: 0,
       };
     }
@@ -184,6 +196,7 @@ export function compileAndRunC(
           timeout: timeoutMs,
           killSignal: 'SIGTERM',
           maxBuffer: 10 * 1024, // 10 KB buffer cap (prevents infinite printf heap crashes)
+          windowsHide: true,
         },
         (execErr, stdout, stderrOutput) => {
           const duration = Math.round(performance.now() - startTime);
