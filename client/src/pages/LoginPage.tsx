@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../state/AuthContext';
 import api from '../services/api';
+import sasiLogo from '../assets/branding/sasi-logo.png';
+import eliteLogo from '../assets/branding/elite-logo.jpg';
 import styles from './LoginPage.module.css';
 
 export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
@@ -91,8 +93,15 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
     <div className={styles.page}>
       <div className={styles.card}>
         <div className={styles.header}>
-          <h1 className={styles.title}>SASI Engineers' Day</h1>
-          <p className={styles.subtitle}>{adminOnly ? 'Administrator Portal' : 'Competition Portal'}</p>
+          <div className={styles.logoWrapper}>
+            <img
+              src={sasiLogo}
+              alt="SASI Institute of Technology & Engineering"
+              className={styles.sasiLogo}
+            />
+          </div>
+          <h1 className={styles.title}>Engineers' Day 2026</h1>
+          <p className={styles.subtitle}>{adminOnly ? 'Control Room Administrator Portal' : 'Live Competition Portal'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className={styles.form}>
@@ -134,6 +143,18 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
+      </div>
+
+      <div className={styles.footerCredit}>
+        <img
+          src={eliteLogo}
+          alt="ELITE - Dept of Information Technology"
+          className={styles.eliteLogo}
+        />
+        <div className={styles.creditText}>
+          <span>Organized by <strong>ELITE</strong></span>
+          <span className={styles.deptSubtext}>Department of Information Technology</span>
+        </div>
       </div>
     </div>
   );

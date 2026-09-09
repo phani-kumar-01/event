@@ -16,7 +16,7 @@
 .badge {
   background: var(--admin-red-tint, #fee2e2);
   border: 1px solid #fca5a5;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   font-size: 0.75rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -49,12 +49,12 @@
 }
 
 .itemCard:hover {
-  border-color: var(--admin-red, #e4002b);
+  border-color: var(--admin-red, #ed1e26);
   background: var(--admin-red-subtle, #fff5f5);
 }
 
 .itemPosition {
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   color: #ffffff;
   width: 28px;
   height: 28px;
@@ -98,8 +98,8 @@
 }
 
 .moveBtn:hover:not(:disabled) {
-  background: var(--admin-red, #e4002b);
-  border-color: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
+  border-color: var(--admin-red, #ed1e26);
   color: #ffffff;
 }
 

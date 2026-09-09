@@ -5,6 +5,8 @@ import { useTimer } from '../hooks/useTimer';
 import { getSocket } from '../services/socket';
 import api from '../services/api';
 import ConnectionBadge from '../components/ConnectionBadge';
+import sasiLogo from '../assets/branding/sasi-logo.png';
+import eliteLogo from '../assets/branding/elite-logo.jpg';
 import styles from './AdminPage.module.css';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
@@ -107,6 +109,29 @@ function getStageBadgeMeta(type: string): { icon: string; tintClass: string } {
       return { icon: '🏆', tintClass: styles.badgeTintRed };
     default:
       return { icon: '🎯', tintClass: styles.badgeTintBlue };
+  }
+}
+
+function getRecommendedQuestions(type: string): { min: number; label: string } {
+  switch (type) {
+    case 'RAPID_FIRE':
+      return { min: 10, label: 'recommend 10+ for a 5 min stage' };
+    case 'GUESS_THE_TECH':
+      return { min: 8, label: 'recommend 8+ for a 5 min stage' };
+    case 'TECH_SHUFFLE':
+      return { min: 6, label: 'recommend 6+ for a 5 min stage' };
+    case 'PUZZLE_GRID':
+      return { min: 1, label: '3x3 sliding matrix' };
+    case 'TECH_SHOWDOWN':
+      return { min: 8, label: 'recommend 8+ for championship' };
+    case 'TECH_TODAY':
+      return { min: 8, label: 'recommend 8+ for contemporary tech' };
+    case 'REAL_OR_FAKE':
+      return { min: 10, label: 'recommend 10+ for rapid binary round' };
+    case 'FINAL_CHALLENGE':
+      return { min: 5, label: 'recommend 5+ for final decider' };
+    default:
+      return { min: 6, label: 'recommend 6+' };
   }
 }
 
@@ -853,10 +878,15 @@ export default function AdminPage() {
       {/* ── Top Bar ──────────────────────────────────────────────────────── */}
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
-          <span className={styles.brandTitle}>
-            <span>⚡ SASI</span>
-            <span>// CONTROL ROOM</span>
-          </span>
+          <div className={styles.brandTitle}>
+            <img
+              src={sasiLogo}
+              alt="SASI Institute of Technology & Engineering"
+              className={styles.headerLogo}
+            />
+            <span className={styles.brandSlash}>/</span>
+            <span className={styles.brandSubtext}>CONTROL ROOM</span>
+          </div>
           {currentEvent && (
             <>
               <div
@@ -897,6 +927,10 @@ export default function AdminPage() {
         </div>
 
         <div className={styles.topbarRight}>
+          <div className={styles.eliteBadge} title="Organized by ELITE — Department of Information Technology">
+            <img src={eliteLogo} alt="ELITE Club" className={styles.eliteMiniLogo} />
+            <span className={styles.eliteBadgeText}>ELITE IT</span>
+          </div>
           <div className={styles.studentCountPill}>
             <ConnectionBadge status={connectionStatus} />
             <span>{students.length} Students</span>
@@ -1294,6 +1328,10 @@ export default function AdminPage() {
                     .filter((c) => c.round === selectedRoundFilter)
                     .map((c) => {
                       const badge = getStageBadgeMeta(c.type);
+                      const qCount = quizQuestions.filter((q) => q.challengeId === c.id).length;
+                      const rec = getRecommendedQuestions(c.type);
+                      const isUnderStocked = c.type !== 'PUZZLE_GRID' && qCount < rec.min;
+
                       return (
                         <div key={c.id} className={styles.itemCard}>
                           <div className={styles.itemCardHeader}>
@@ -1323,8 +1361,36 @@ export default function AdminPage() {
                               </button>
                             </div>
                           </div>
+
                           <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)', marginTop: 'var(--space-2)' }}>
                             {c.description || c.subtitle || 'No stage description.'}
+                          </div>
+
+                          {/* Question Stock / Recommended Minimum Indicator */}
+                          <div style={{ marginTop: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                            <span
+                              className={`${styles.commandStateBadge} ${
+                                c.type === 'PUZZLE_GRID'
+                                  ? styles.badgeTintGreen
+                                  : isUnderStocked
+                                  ? styles.badgeTintAmber
+                                  : styles.badgeTintGreen
+                              }`}
+                              style={{
+                                fontSize: '0.75rem',
+                                padding: '3px 8px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.3rem',
+                              }}
+                            >
+                              {c.type === 'PUZZLE_GRID'
+                                ? '🧩 Interactive 3x3 Board'
+                                : isUnderStocked
+                                ? `⚠️ ${qCount} questions — ${rec.label}`
+                                : `✅ ${qCount} questions (Ready)`}
+                            </span>
                           </div>
                         </div>
                       );

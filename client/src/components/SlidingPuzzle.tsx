@@ -10,6 +10,9 @@ interface Props {
     image?: string;
     shuffleMoves?: number;
   };
+  initialState?: number[] | string;
+  alreadySolved?: boolean;
+  savedMoves?: number;
   onComplete?: (result: { moves: number; timeTakenSeconds: number; isSolved: boolean; initialState: string }) => void;
   isReadOnly?: boolean;
 }
@@ -85,28 +88,51 @@ export default function SlidingPuzzle({
   points,
   config,
   onComplete,
+  initialState,
+  alreadySolved = false,
+  savedMoves = 0,
   isReadOnly = false,
 }: Props) {
   const [initialBoard, setInitialBoard] = useState<number[]>([]);
   const [board, setBoard] = useState<number[]>([]);
-  const [moves, setMoves] = useState(0);
+  const [moves, setMoves] = useState(savedMoves);
   const [startTime, setStartTime] = useState<number>(Date.now());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [solved, setSolved] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const [solved, setSolved] = useState(alreadySolved);
+  const [submitted, setSubmitted] = useState(alreadySolved);
 
-  // Initialize board
+  // Initialize board from server-persisted initialState or fallback
   useEffect(() => {
-    const shuffleSteps = config?.shuffleMoves || 28;
-    const { board: generated } = generateSolvableBoard(shuffleSteps);
-    setInitialBoard(generated);
-    setBoard(generated);
-    setMoves(0);
+    let startingBoard: number[] | null = null;
+    if (initialState) {
+      if (Array.isArray(initialState) && initialState.length === 9) {
+        startingBoard = initialState;
+      } else if (typeof initialState === 'string') {
+        try {
+          const parsed = JSON.parse(initialState);
+          if (Array.isArray(parsed) && parsed.length === 9) {
+            startingBoard = parsed;
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!startingBoard) {
+      const shuffleSteps = config?.shuffleMoves || 28;
+      const { board: generated } = generateSolvableBoard(shuffleSteps);
+      startingBoard = generated;
+    }
+
+    setInitialBoard(startingBoard);
+    setBoard(startingBoard);
+    setMoves(savedMoves);
     setStartTime(Date.now());
     setElapsedSeconds(0);
-    setSolved(false);
-    setSubmitted(false);
-  }, [challengeId, config?.shuffleMoves]);
+    setSolved(alreadySolved);
+    setSubmitted(alreadySolved);
+  }, [challengeId, config?.shuffleMoves, initialState, alreadySolved, savedMoves]);
 
   // Live timer
   useEffect(() => {

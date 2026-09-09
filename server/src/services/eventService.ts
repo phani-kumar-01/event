@@ -527,4 +527,354 @@ export async function readyEvent(eventId: string) {
   });
 }
 
+// ─── Deterministic Seeded Randomization & Question Ordering ──────────────────
+
+/**
+ * Simple 32-bit string hash (FNV-1a)
+ */
+export function hashString(str: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Seeded PRNG: Mulberry32
+ * Returns deterministic pseudo-random float in [0, 1)
+ */
+export function createMulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Seeded Fisher-Yates shuffle
+ */
+export function seededShuffle<T>(array: T[], prng: () => number): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(prng() * (i + 1));
+    const temp = result[i];
+    result[i] = result[j];
+    result[j] = temp;
+  }
+  return result;
+}
+
+export interface OptionMapping {
+  displayToOriginal: Record<string, string>; // e.g. { A: "C", B: "A", C: "D", D: "B" }
+  originalToDisplay: Record<string, string>; // e.g. { C: "A", A: "B", D: "C", B: "D" }
+  optionA: string;
+  optionB: string;
+  optionC: string;
+  optionD: string;
+  shuffleInitialOrder?: string[];
+}
+
+/**
+ * Fetch and return the deterministic, student-specific ordered question list for a challenge.
+ * On first call for (userId, challengeId), computes a seeded shuffle of questions and MCQ options,
+ * persists the order in StudentQuestionOrder table, and serves this exact order on all subsequent calls.
+ */
+export async function getOrderedQuestionsForStudent(
+  userId: string,
+  challengeId: string,
+  options: { includeAnswers?: boolean } = {}
+) {
+  // 1. Check if order was already persisted for this student and challenge
+  let orderRecord = await prisma.studentQuestionOrder.findUnique({
+    where: {
+      userId_challengeId: { userId, challengeId },
+    },
+  });
+
+  // Fetch all active questions for this challenge
+  const allQuestions = await prisma.quizQuestion.findMany({
+    where: { challengeId },
+    orderBy: { order: 'asc' },
+  });
+
+  if (allQuestions.length === 0) {
+    return [];
+  }
+
+  let orderedQuestionIds: string[] = [];
+  let optionMapPerQuestion: Record<string, OptionMapping> = {};
+
+  if (orderRecord) {
+    try {
+      orderedQuestionIds = JSON.parse(orderRecord.orderedQuestionIds);
+      optionMapPerQuestion = JSON.parse(orderRecord.optionMapPerQuestion);
+    } catch {
+      orderRecord = null;
+    }
+  }
+
+  // 2. If first time, compute and persist the student's unique shuffle
+  if (!orderRecord) {
+    const seed = hashString(`${userId}_${challengeId}`);
+    const prng = createMulberry32(seed);
+
+    // (a) Permute question order
+    const shuffledQuestions = seededShuffle(allQuestions, prng);
+    orderedQuestionIds = shuffledQuestions.map((q) => q.id);
+
+    // (b) Permute option order for each question
+    for (const q of shuffledQuestions) {
+      if (q.type === 'SHUFFLE_ORDER') {
+        const rawItems = [q.optionA, q.optionB, q.optionC, q.optionD].filter(
+          (opt) => opt && opt.trim() !== ''
+        );
+        let scrambled = seededShuffle(rawItems, prng);
+        try {
+          const correctSeq = JSON.parse(q.correctAnswer);
+          if (
+            Array.isArray(correctSeq) &&
+            JSON.stringify(scrambled) === JSON.stringify(correctSeq) &&
+            scrambled.length > 1
+          ) {
+            const first = scrambled[0];
+            scrambled[0] = scrambled[1];
+            scrambled[1] = first;
+          }
+        } catch {
+          // ignore
+        }
+
+        optionMapPerQuestion[q.id] = {
+          displayToOriginal: { A: 'A', B: 'B', C: 'C', D: 'D' },
+          originalToDisplay: { A: 'A', B: 'B', C: 'C', D: 'D' },
+          optionA: scrambled[0] || '',
+          optionB: scrambled[1] || '',
+          optionC: scrambled[2] || '',
+          optionD: scrambled[3] || '',
+          shuffleInitialOrder: scrambled,
+        };
+      } else if (q.type === 'REAL_OR_FAKE') {
+        optionMapPerQuestion[q.id] = {
+          displayToOriginal: { REAL: 'REAL', FAKE: 'FAKE' },
+          originalToDisplay: { REAL: 'REAL', FAKE: 'FAKE' },
+          optionA: q.optionA,
+          optionB: q.optionB,
+          optionC: q.optionC,
+          optionD: q.optionD,
+        };
+      } else {
+        const origOptions = [
+          { key: 'A', text: q.optionA },
+          { key: 'B', text: q.optionB },
+          { key: 'C', text: q.optionC },
+          { key: 'D', text: q.optionD },
+        ].filter((opt) => opt.text && opt.text.trim() !== '');
+
+        if (origOptions.length >= 2) {
+          const shuffledOpts = seededShuffle(origOptions, prng);
+          const displayKeys = ['A', 'B', 'C', 'D'].slice(0, shuffledOpts.length);
+          const displayToOrig: Record<string, string> = {};
+          const origToDisplay: Record<string, string> = {};
+          const displayOpts: Record<string, string> = {
+            optionA: '',
+            optionB: '',
+            optionC: '',
+            optionD: '',
+          };
+
+          for (let k = 0; k < displayKeys.length; k++) {
+            const dispKey = displayKeys[k];
+            const orig = shuffledOpts[k];
+            displayToOrig[dispKey] = orig.key;
+            origToDisplay[orig.key] = dispKey;
+            displayOpts[`option${dispKey}`] = orig.text;
+          }
+
+          optionMapPerQuestion[q.id] = {
+            displayToOriginal: displayToOrig,
+            originalToDisplay: origToDisplay,
+            optionA: displayOpts.optionA || '',
+            optionB: displayOpts.optionB || '',
+            optionC: displayOpts.optionC || '',
+            optionD: displayOpts.optionD || '',
+          };
+        } else {
+          optionMapPerQuestion[q.id] = {
+            displayToOriginal: { A: 'A', B: 'B', C: 'C', D: 'D' },
+            originalToDisplay: { A: 'A', B: 'B', C: 'C', D: 'D' },
+            optionA: q.optionA,
+            optionB: q.optionB,
+            optionC: q.optionC,
+            optionD: q.optionD,
+          };
+        }
+      }
+    }
+
+    // Save computed order in DB
+    await prisma.studentQuestionOrder.upsert({
+      where: { userId_challengeId: { userId, challengeId } },
+      create: {
+        userId,
+        challengeId,
+        orderedQuestionIds: JSON.stringify(orderedQuestionIds),
+        optionMapPerQuestion: JSON.stringify(optionMapPerQuestion),
+      },
+      update: {
+        orderedQuestionIds: JSON.stringify(orderedQuestionIds),
+        optionMapPerQuestion: JSON.stringify(optionMapPerQuestion),
+      },
+    });
+  }
+
+  // 3. Construct questions matching the stored order and remapped options
+  const qMap = new Map(allQuestions.map((q) => [q.id, q]));
+  const result = [];
+
+  for (const qId of orderedQuestionIds) {
+    const rawQ = qMap.get(qId);
+    if (!rawQ) continue;
+
+    const optMap = optionMapPerQuestion[qId];
+    const displayA = optMap ? optMap.optionA : rawQ.optionA;
+    const displayB = optMap ? optMap.optionB : rawQ.optionB;
+    const displayC = optMap ? optMap.optionC : rawQ.optionC;
+    const displayD = optMap ? optMap.optionD : rawQ.optionD;
+
+    result.push({
+      id: rawQ.id,
+      challengeId: rawQ.challengeId,
+      round: rawQ.round,
+      category: rawQ.category,
+      type: rawQ.type,
+      question: rawQ.question,
+      imageUrl: rawQ.imageUrl,
+      optionA: displayA,
+      optionB: displayB,
+      optionC: displayC,
+      optionD: displayD,
+      points: rawQ.points,
+      order: rawQ.order,
+      ...(options.includeAnswers && {
+        correctAnswer: rawQ.correctAnswer,
+        explanation: rawQ.explanation,
+        optionMapping: optMap,
+      }),
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Validate a student answer taking option remapping into account.
+ */
+export async function validateStudentAnswer(
+  userId: string,
+  question: { id: string; challengeId: string | null; type: string; correctAnswer: string; points: number },
+  selectedAnswer: string
+): Promise<{ isCorrect: boolean; pointsAwarded: number }> {
+  let isCorrect = false;
+
+  if (question.type === 'SHUFFLE_ORDER') {
+    try {
+      const studentArr = JSON.parse(selectedAnswer);
+      const correctArr = JSON.parse(question.correctAnswer);
+      isCorrect = JSON.stringify(studentArr) === JSON.stringify(correctArr);
+    } catch {
+      isCorrect = selectedAnswer.trim() === question.correctAnswer.trim();
+    }
+  } else if (question.type === 'REAL_OR_FAKE') {
+    isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+  } else {
+    if (question.challengeId) {
+      const orderRecord = await prisma.studentQuestionOrder.findUnique({
+        where: { userId_challengeId: { userId, challengeId: question.challengeId } },
+      });
+
+      if (orderRecord) {
+        try {
+          const optionMap = JSON.parse(orderRecord.optionMapPerQuestion);
+          const qMap: OptionMapping = optionMap[question.id];
+          if (qMap && qMap.displayToOriginal) {
+            const originalSelected = qMap.displayToOriginal[selectedAnswer.trim().toUpperCase()];
+            if (originalSelected) {
+              isCorrect = originalSelected.toUpperCase() === question.correctAnswer.trim().toUpperCase();
+            } else {
+              isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+            }
+          } else {
+            isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+          }
+        } catch {
+          isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+        }
+      } else {
+        isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+      }
+    } else {
+      isCorrect = selectedAnswer.trim().toUpperCase() === question.correctAnswer.trim().toUpperCase();
+    }
+  }
+
+  const pointsAwarded = isCorrect ? question.points : 0;
+  return { isCorrect, pointsAwarded };
+}
+
+// ─── Seeded 3x3 Sliding Puzzle Generator ─────────────────────────────────────
+const SOLVED_PUZZLE_STATE = [1, 2, 3, 4, 5, 6, 7, 8, 0];
+
+export function generateSeededPuzzleBoard(userId: string, challengeId: string, movesCount = 28): number[] {
+  const seed = hashString(`${userId}_${challengeId}_puzzle`);
+  const prng = createMulberry32(seed);
+
+  const board = [...SOLVED_PUZZLE_STATE];
+  let emptyIdx = 8;
+  let lastMove = -1;
+
+  for (let m = 0; m < movesCount; m++) {
+    const row = Math.floor(emptyIdx / 3);
+    const col = emptyIdx % 3;
+    const neighbors: number[] = [];
+
+    if (row > 0) neighbors.push(emptyIdx - 3); // Up
+    if (row < 2) neighbors.push(emptyIdx + 3); // Down
+    if (col > 0) neighbors.push(emptyIdx - 1); // Left
+    if (col < 2) neighbors.push(emptyIdx + 1); // Right
+
+    const validMoves = neighbors.filter((n) => n !== lastMove);
+    const chosen = validMoves.length > 0
+      ? validMoves[Math.floor(prng() * validMoves.length)]
+      : neighbors[Math.floor(prng() * neighbors.length)];
+
+    board[emptyIdx] = board[chosen];
+    board[chosen] = 0;
+    lastMove = emptyIdx;
+    emptyIdx = chosen;
+  }
+
+  let isSolved = true;
+  for (let i = 0; i < SOLVED_PUZZLE_STATE.length; i++) {
+    if (board[i] !== SOLVED_PUZZLE_STATE[i]) {
+      isSolved = false;
+      break;
+    }
+  }
+
+  if (isSolved) {
+    const neighbors = [emptyIdx > 2 ? emptyIdx - 3 : emptyIdx + 3];
+    const chosen = neighbors[0];
+    board[emptyIdx] = board[chosen];
+    board[chosen] = 0;
+  }
+
+  return board;
+}
+
 export type { EventType };
+

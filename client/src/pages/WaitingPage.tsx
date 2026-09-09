@@ -5,6 +5,8 @@ import { useConnectionStatus } from '../hooks/useConnectionStatus';
 import { getSocket } from '../services/socket';
 import api from '../services/api';
 import ConnectionBadge from '../components/ConnectionBadge';
+import sasiLogo from '../assets/branding/sasi-logo.png';
+import eliteLogo from '../assets/branding/elite-logo.jpg';
 import styles from './WaitingPage.module.css';
 
 interface QualificationInfo {
@@ -130,10 +132,14 @@ export default function WaitingPage() {
     <div className={styles.page}>
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <h1 className={styles.siteTitle}>SASI Engineers' Day</h1>
+          <img
+            src={sasiLogo}
+            alt="SASI Institute of Technology & Engineering"
+            className={styles.headerLogo}
+          />
           {event && (
             <span className={styles.eventBadge}>
-              {event.type === 'DEBUGGING' ? '💻 C Debugging' : '⚡ Technical Quiz'}
+              {event.type === 'DEBUGGING' ? '💻 C Debugging Arena' : '⚡ Technical Quiz'}
             </span>
           )}
         </div>
@@ -240,6 +246,18 @@ export default function WaitingPage() {
           </div>
         )}
       </main>
+
+      <footer className={styles.footerCredit}>
+        <img
+          src={eliteLogo}
+          alt="ELITE - Dept of Information Technology"
+          className={styles.eliteLogo}
+        />
+        <div className={styles.creditText}>
+          <span>Organized by <strong>ELITE</strong></span>
+          <span className={styles.deptSubtext}>Department of Information Technology</span>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import api from '../services/api';
 import ConnectionBadge from '../components/ConnectionBadge';
 import SlidingPuzzle from '../components/SlidingPuzzle';
 import TechShuffle from '../components/TechShuffle';
+import sasiLogo from '../assets/branding/sasi-logo.png';
 import styles from './QuizPage.module.css';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ export default function QuizPage() {
   const [shuffleOrder, setShuffleOrder] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [puzzleCompleted, setPuzzleCompleted] = useState(false);
+  const [puzzleData, setPuzzleData] = useState<{ isSolved: boolean; initialState?: string; moves?: number } | null>(null);
 
   const isEventRunning = event?.status === 'RUNNING';
   const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
@@ -241,9 +243,10 @@ export default function QuizPage() {
       });
       setAnswers(aMap);
 
-      const pzRes = await api.get<{ puzzle: { isSolved: boolean } | null }>(
-        `/events/${event.id}/my-puzzle`
+      const pzRes = await api.get<{ puzzle: { isSolved: boolean; initialState?: string; moves?: number } | null }>(
+        `/events/${event.id}/my-puzzle${activeChallengeId ? `?challengeId=${activeChallengeId}` : ''}`
       );
+      setPuzzleData(pzRes.data.puzzle);
       setPuzzleCompleted(!!pzRes.data.puzzle?.isSolved);
     } catch {
       // Ignore
@@ -452,10 +455,15 @@ export default function QuizPage() {
       <div className={styles.page}>
         <header className={styles.topbar}>
           <div className={styles.topbarLeft}>
-            <span className={styles.brandTitle}>
-              <span>⚡ SASI</span>
-              <span>// TECHNICAL QUIZ</span>
-            </span>
+            <div className={styles.brandTitle}>
+              <img
+                src={sasiLogo}
+                alt="SASI Institute of Technology & Engineering"
+                className={styles.headerLogo}
+              />
+              <span className={styles.brandSlash}>/</span>
+              <span className={styles.brandSubtext}>TECHNICAL QUIZ</span>
+            </div>
           </div>
           <div className={styles.topbarRight}>
             <ConnectionBadge status={connectionStatus} />
@@ -491,10 +499,15 @@ export default function QuizPage() {
       {/* ── Persistent Top Bar ────────────────────────────────────────────── */}
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
-          <span className={styles.brandTitle}>
-            <span>⚡ SASI</span>
-            <span>// TECHNICAL QUIZ</span>
-          </span>
+          <div className={styles.brandTitle}>
+            <img
+              src={sasiLogo}
+              alt="SASI Institute of Technology & Engineering"
+              className={styles.headerLogo}
+            />
+            <span className={styles.brandSlash}>/</span>
+            <span className={styles.brandSubtext}>TECHNICAL QUIZ</span>
+          </div>
           <span className={styles.eventPill}>
             {isEventRunning && <span className={styles.liveDot} />}
             <span>{event?.status || 'STANDBY'}</span>
@@ -585,6 +598,9 @@ export default function QuizPage() {
                 points={currentChallenge.points}
                 timeLimit={currentChallenge.timeLimit}
                 config={currentChallenge.config as { title?: string; image?: string; shuffleMoves?: number }}
+                initialState={puzzleData?.initialState}
+                alreadySolved={!!puzzleData?.isSolved}
+                savedMoves={puzzleData?.moves || 0}
                 onComplete={handlePuzzleComplete}
                 isReadOnly={!isEventRunning}
               />

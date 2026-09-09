@@ -6,6 +6,7 @@ export default defineConfig({
   root: resolve(__dirname, 'admin'),
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
     port: 5174,
     fs: {
       allow: [resolve(__dirname, '..')],

@@ -1,10 +1,16 @@
 /* ─── Control Room Palette & Tokens ──────────────────────────────────────── */
 :root {
-  --admin-red: #e4002b;
-  --admin-red-hover: #c50025;
-  --admin-red-dark: #96001b;
+  --admin-red: #ed1e26;
+  --admin-red-hover: #cc141b;
+  --admin-red-dark: #9b0e14;
   --admin-red-tint: #fee2e2;
   --admin-red-subtle: #fff5f5;
+
+  --admin-navy: #272793;
+  --admin-navy-hover: #1e1e75;
+  --admin-navy-dark: #161658;
+  --admin-navy-tint: #e8e8fb;
+  --admin-navy-subtle: #f4f4fd;
 
   --admin-bg: #f8fafc;
   --admin-surface: #ffffff;
@@ -13,7 +19,7 @@
 
   --admin-border: #e2e8f0;
   --admin-border-dark: #cbd5e1;
-  --admin-border-focus: #e4002b;
+  --admin-border-focus: #ed1e26;
 
   --admin-text-main: #0f172a;
   --admin-text-muted: #64748b;
@@ -64,13 +70,32 @@
 }
 
 .brandTitle {
-  font-size: var(--font-size-heading, 1.125rem);
-  font-weight: 800;
-  color: var(--admin-red, #e4002b);
-  letter-spacing: -0.02em;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.headerLogo {
+  height: 34px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+  display: block;
+}
+
+.brandSlash {
+  color: var(--admin-border-dark, #cbd5e1);
+  font-size: 0.95rem;
+  font-weight: 300;
+}
+
+.brandSubtext {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--admin-navy, #272793);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .eventPill {
@@ -85,14 +110,14 @@
   letter-spacing: 0.04em;
   border: 1px solid var(--admin-red-tint, #fee2e2);
   background: var(--admin-red-subtle, #fff5f5);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .liveDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   animation: pulseDot 1.5s infinite;
 }
 
@@ -145,7 +170,7 @@
 }
 
 .timerValueUrgent {
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .topbarRight {
@@ -168,7 +193,7 @@
 
 .logoutBtn:hover {
   background: var(--admin-red-subtle, #fff5f5);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   border-color: var(--admin-red-tint, #fee2e2);
 }
 
@@ -202,7 +227,7 @@
 .sidebarTitle {
   font-size: var(--font-size-micro, 0.75rem);
   font-weight: 800;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -242,8 +267,8 @@
 
 .challengeBtnActive {
   background: var(--admin-red-subtle, #fff5f5) !important;
-  border-color: var(--admin-red, #e4002b) !important;
-  border-left: 4px solid var(--admin-red, #e4002b) !important;
+  border-color: var(--admin-red, #ed1e26) !important;
+  border-left: 4px solid var(--admin-red, #ed1e26) !important;
 }
 
 .challengeBtnDone {
@@ -276,7 +301,7 @@
 
 .challengeBtnActive .statusPill {
   background: var(--admin-red-tint, #fee2e2);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .challengeBtnDone .statusPill {
@@ -352,7 +377,7 @@
 .bannerRapidFire {
   background: #fff5f5;
   border-color: #fee2e2;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .bannerGuessTech {
@@ -393,8 +418,8 @@
 
 .bannerFinalChallenge {
   background: #fff5f5;
-  border-color: var(--admin-red, #e4002b);
-  border-left: 5px solid var(--admin-red, #e4002b);
+  border-color: var(--admin-red, #ed1e26);
+  border-left: 5px solid var(--admin-red, #ed1e26);
   color: var(--admin-red-dark, #96001b);
 }
 
@@ -434,7 +459,7 @@
 .pointsBadge {
   font-size: var(--font-size-micro, 0.75rem);
   font-weight: 700;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   background: var(--admin-red-tint, #fee2e2);
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-sm, 4px);
@@ -503,14 +528,14 @@
 }
 
 .optionCard:hover:not(:disabled) {
-  border-color: var(--admin-red, #e4002b);
+  border-color: var(--admin-red, #ed1e26);
   background: var(--admin-red-subtle, #fff5f5);
 }
 
 .optionSelected {
-  border-color: var(--admin-red, #e4002b) !important;
+  border-color: var(--admin-red, #ed1e26) !important;
   background: var(--admin-red-subtle, #fff5f5) !important;
-  box-shadow: inset 0 0 0 1px var(--admin-red, #e4002b);
+  box-shadow: inset 0 0 0 1px var(--admin-red, #ed1e26);
 }
 
 .optKey {
@@ -530,9 +555,9 @@
 }
 
 .optionSelected .optKey {
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   color: #ffffff;
-  border-color: var(--admin-red, #e4002b);
+  border-color: var(--admin-red, #ed1e26);
 }
 
 .optText {
@@ -581,7 +606,7 @@
 .fakeBtn {
   background: var(--admin-red-tint, #fee2e2);
   border-color: #fca5a5;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .fakeBtn:hover:not(:disabled) {
@@ -596,9 +621,9 @@
 }
 
 .fakeBtn.realFakeSelected {
-  border-color: var(--admin-red, #e4002b) !important;
+  border-color: var(--admin-red, #ed1e26) !important;
   background: #fecaca !important;
-  box-shadow: inset 0 0 0 2px var(--admin-red, #e4002b);
+  box-shadow: inset 0 0 0 2px var(--admin-red, #ed1e26);
 }
 
 .rfIcon {
@@ -628,7 +653,7 @@
 
 .navBtn:hover:not(:disabled) {
   background: var(--admin-surface-alt, #f1f5f9);
-  border-color: var(--admin-border-focus, #e4002b);
+  border-color: var(--admin-border-focus, #ed1e26);
 }
 
 .navBtn:disabled {
@@ -678,13 +703,13 @@
 }
 
 .idxBtn:hover {
-  border-color: var(--admin-red, #e4002b);
-  color: var(--admin-red, #e4002b);
+  border-color: var(--admin-red, #ed1e26);
+  color: var(--admin-red, #ed1e26);
 }
 
 .idxCurrent {
-  border-color: var(--admin-red, #e4002b) !important;
-  color: var(--admin-red, #e4002b) !important;
+  border-color: var(--admin-red, #ed1e26) !important;
+  color: var(--admin-red, #ed1e26) !important;
   background: var(--admin-red-tint, #fee2e2) !important;
   font-weight: 800;
 }
@@ -704,7 +729,7 @@
   padding: 2.5rem 2rem;
   text-align: center;
   border: 1px solid var(--admin-border, #e2e8f0);
-  border-top: 4px solid var(--admin-red, #e4002b);
+  border-top: 4px solid var(--admin-red, #ed1e26);
   display: flex;
   flex-direction: column;
   align-items: center;

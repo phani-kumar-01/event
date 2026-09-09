@@ -1,11 +1,18 @@
 /* ─── Control Room Palette & Design Tokens ──────────────────────────────── */
 :root {
-  /* Brand SASI Red Palette */
-  --admin-red: #e4002b;
-  --admin-red-hover: #c50025;
-  --admin-red-dark: #96001b;
+  /* Brand SASI Red Palette (Sampled: #ED1E26) */
+  --admin-red: #ed1e26;
+  --admin-red-hover: #cc141b;
+  --admin-red-dark: #9b0e14;
   --admin-red-tint: #fee2e2;
   --admin-red-subtle: #fff5f5;
+
+  /* Brand SASI Navy / Blue Palette (Sampled: #272793) */
+  --admin-navy: #272793;
+  --admin-navy-hover: #1e1e75;
+  --admin-navy-dark: #161658;
+  --admin-navy-tint: #e8e8fb;
+  --admin-navy-subtle: #f4f4fd;
 
   /* Neutrals & Backgrounds */
   --admin-bg: #f8fafc;
@@ -17,7 +24,7 @@
   /* Borders */
   --admin-border: #e2e8f0;
   --admin-border-dark: #cbd5e1;
-  --admin-border-focus: #e4002b;
+  --admin-border-focus: #ed1e26;
 
   /* Typography Colors */
   --admin-text-main: #0f172a;
@@ -29,8 +36,8 @@
   --admin-green-tint: #dcfce7;
   --admin-yellow: #d97706;
   --admin-yellow-tint: #fef3c7;
-  --admin-blue: #0284c7;
-  --admin-blue-tint: #e0f2fe;
+  --admin-blue: #272793;
+  --admin-blue-tint: #e8e8fb;
   --admin-purple: #7e22ce;
   --admin-purple-tint: #f3e8ff;
 
@@ -94,13 +101,58 @@
 }
 
 .brandTitle {
-  font-size: 1.125rem;
-  font-weight: 800;
-  color: var(--admin-red);
-  letter-spacing: -0.02em;
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  text-decoration: none;
+}
+
+.headerLogo {
+  height: 36px;
+  width: auto;
+  max-width: 200px;
+  object-fit: contain;
+  display: block;
+}
+
+.brandSlash {
+  color: var(--admin-border-dark);
+  font-size: 1rem;
+  font-weight: 300;
+}
+
+.brandSubtext {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--admin-navy);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.eliteBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  background: var(--admin-surface-alt);
+  border: 1px solid var(--admin-border);
+  border-radius: var(--radius-full);
+}
+
+.eliteMiniLogo {
+  height: 18px;
+  width: 18px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.eliteBadgeText {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  color: var(--admin-navy);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .liveEventPill {

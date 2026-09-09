@@ -2,7 +2,12 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../utils/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
-import { getCurrentEvent } from '../services/eventService';
+import {
+  getCurrentEvent,
+  getOrderedQuestionsForStudent,
+  validateStudentAnswer,
+  generateSeededPuzzleBoard,
+} from '../services/eventService';
 import { executeCode, runCodePreview, TestCase } from '../services/executionService';
 
 const router = Router();
@@ -351,30 +356,21 @@ router.get(
       }
     }
 
-    const questions = await prisma.quizQuestion.findMany({
-      where: {
-        eventId: event.id,
-        round,
-        ...(challengeId && { challengeId }),
-      },
-      orderBy: { order: 'asc' },
-      select: {
-        id: true,
-        challengeId: true,
-        round: true,
-        category: true,
-        type: true,
-        question: true,
-        imageUrl: true,
-        optionA: true,
-        optionB: true,
-        optionC: true,
-        optionD: true,
-        points: true,
-        order: true,
-        // Exclude correctAnswer and explanation for competitive integrity
-      },
-    });
+    const userId = req.user!.userId;
+    let questions: any[] = [];
+
+    if (challengeId) {
+      questions = await getOrderedQuestionsForStudent(userId, challengeId);
+    } else {
+      const challenges = await prisma.quizChallenge.findMany({
+        where: { eventId: event.id, round, isActive: true },
+        orderBy: { order: 'asc' },
+      });
+      for (const c of challenges) {
+        const cQuestions = await getOrderedQuestionsForStudent(userId, c.id);
+        questions.push(...cQuestions);
+      }
+    }
 
     res.json({ questions });
   }
@@ -413,15 +409,44 @@ router.get(
   requireAuth,
   async (req: AuthRequest, res: Response): Promise<void> => {
     const eventId = String(req.params.id);
+    const userId = req.user!.userId;
     const challengeId = req.query.challengeId ? String(req.query.challengeId) : undefined;
 
-    const puzzle = await prisma.puzzleSubmission.findFirst({
+    let puzzle = await prisma.puzzleSubmission.findFirst({
       where: {
-        userId: req.user!.userId,
+        userId,
         eventId,
         ...(challengeId && { challengeId }),
       },
     });
+
+    let targetChallengeId = challengeId;
+    if (!targetChallengeId) {
+      const pzChallenge = await prisma.quizChallenge.findFirst({
+        where: { eventId, type: 'PUZZLE_GRID', isActive: true },
+      });
+      targetChallengeId = pzChallenge?.id;
+    }
+
+    if (!puzzle && targetChallengeId) {
+      const challenge = await prisma.quizChallenge.findUnique({ where: { id: targetChallengeId } });
+      if (challenge) {
+        const initialBoard = generateSeededPuzzleBoard(userId, targetChallengeId, 28);
+        puzzle = await prisma.puzzleSubmission.create({
+          data: {
+            userId,
+            eventId,
+            challengeId: targetChallengeId,
+            round: challenge.round,
+            moves: 0,
+            timeTakenSeconds: 0,
+            isSolved: false,
+            initialState: JSON.stringify(initialBoard),
+            pointsAwarded: 0,
+          },
+        });
+      }
+    }
 
     res.json({ puzzle });
   }
@@ -576,21 +601,8 @@ router.post(
       }
     }
 
-    // Server-side correctness check
-    let isCorrect = false;
-    if (question.type === 'SHUFFLE_ORDER') {
-      try {
-        const studentArr = JSON.parse(selectedAnswer);
-        const correctArr = JSON.parse(question.correctAnswer);
-        isCorrect = JSON.stringify(studentArr) === JSON.stringify(correctArr);
-      } catch {
-        isCorrect = selectedAnswer.trim() === question.correctAnswer.trim();
-      }
-    } else {
-      isCorrect = question.correctAnswer.trim().toUpperCase() === selectedAnswer.trim().toUpperCase();
-    }
-
-    const pointsAwarded = isCorrect ? question.points : 0;
+    // Server-side correctness check (accounting for student-specific option remapping)
+    const { isCorrect, pointsAwarded } = await validateStudentAnswer(userId, question, selectedAnswer);
 
     const answer = await prisma.answer.upsert({
       where: { userId_questionId: { userId, questionId } },

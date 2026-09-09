@@ -7,6 +7,7 @@ import { useConnectionStatus } from '../hooks/useConnectionStatus';
 import { getSocket } from '../services/socket';
 import api from '../services/api';
 import ConnectionBadge from '../components/ConnectionBadge';
+import sasiLogo from '../assets/branding/sasi-logo.png';
 import styles from './DebuggingPage.module.css';
 
 interface Event {
@@ -248,10 +249,15 @@ export default function DebuggingPage() {
       {/* ── Persistent Top Bar ────────────────────────────────────────────── */}
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
-          <span className={styles.brandTitle}>
-            <span>⚡ SASI</span>
-            <span>// C DEBUGGING ARENA</span>
-          </span>
+          <div className={styles.brandTitle}>
+            <img
+              src={sasiLogo}
+              alt="SASI Institute of Technology & Engineering"
+              className={styles.headerLogo}
+            />
+            <span className={styles.brandSlash}>/</span>
+            <span className={styles.brandSubtext}>C DEBUGGING ARENA</span>
+          </div>
           <span className={styles.eventPill}>
             {isEventRunning && <span className={styles.liveDot} />}
             <span>{event?.status || 'STANDBY'}</span>

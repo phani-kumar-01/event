@@ -233,3 +233,16 @@ model ThemeSettings {
   version         Int      @default(0)
   updatedAt       DateTime @updatedAt
 }
+
+model StudentQuestionOrder {
+  id                   String   @id @default(cuid())
+  userId               String
+  challengeId          String
+  orderedQuestionIds   String   // JSON array of string question IDs
+  optionMapPerQuestion String   // JSON string of Record<questionId, OptionMapping>
+  createdAt            DateTime @default(now())
+
+  @@unique([userId, challengeId])
+  @@index([userId, challengeId])
+}
+

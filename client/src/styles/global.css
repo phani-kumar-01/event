@@ -1,10 +1,21 @@
-/* ─── Hardcoded SASI Red & White Theme ───────────────────────────────────── */
+/* ─── SASI Brand Theme (Sampled Exact Palette) ─────────────────────────── */
 :root {
-  --color-primary: #e4002b;
-  --color-primary-hover: #c50025;
-  --color-primary-dark: #96001b;
-  --color-secondary: #0f172a;
-  --color-accent: #e4002b;
+  /* Brand SASI Red (Sampled: #ED1E26) */
+  --color-primary: #ed1e26;
+  --color-primary-hover: #cc141b;
+  --color-primary-dark: #9b0e14;
+  --color-primary-tint: #fee2e2;
+  --color-primary-subtle: #fff5f5;
+
+  /* Brand SASI Navy/Blue (Sampled: #272793) */
+  --color-secondary: #272793;
+  --color-secondary-hover: #1e1e75;
+  --color-secondary-dark: #161658;
+  --color-secondary-tint: #e8e8fb;
+  --color-secondary-subtle: #f4f4fd;
+
+  --color-accent: #ed1e26;
+  --color-accent-blue: #272793;
   --color-background: #f8fafc;
   --color-surface: #ffffff;
   --color-surface-alt: #f1f5f9;
@@ -12,18 +23,31 @@
   --color-text-muted: #64748b;
   --color-border: #e2e8f0;
 
-  --admin-red: #e4002b;
-  --admin-red-hover: #c50025;
-  --admin-red-dark: #96001b;
+  /* Admin & Component Brand Tokens */
+  --admin-red: #ed1e26;
+  --admin-red-hover: #cc141b;
+  --admin-red-dark: #9b0e14;
   --admin-red-tint: #fee2e2;
   --admin-red-subtle: #fff5f5;
+
+  --admin-navy: #272793;
+  --admin-navy-hover: #1e1e75;
+  --admin-navy-dark: #161658;
+  --admin-navy-tint: #e8e8fb;
+  --admin-navy-subtle: #f4f4fd;
+
+  --admin-blue: #272793;
+  --admin-blue-tint: #e8e8fb;
+  --admin-purple: #7e22ce;
+  --admin-purple-tint: #f3e8ff;
+
   --admin-bg: #f8fafc;
   --admin-surface: #ffffff;
   --admin-surface-alt: #f1f5f9;
   --admin-surface-hover: #f8fafc;
   --admin-border: #e2e8f0;
   --admin-border-dark: #cbd5e1;
-  --admin-border-focus: #e4002b;
+  --admin-border-focus: #ed1e26;
   --admin-text-main: #0f172a;
   --admin-text-muted: #64748b;
   --admin-text-light: #94a3b8;

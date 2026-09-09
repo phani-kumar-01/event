@@ -1,10 +1,16 @@
 /* ─── Control Room Palette & Tokens ──────────────────────────────────────── */
 :root {
-  --admin-red: #e4002b;
-  --admin-red-hover: #c50025;
-  --admin-red-dark: #96001b;
+  --admin-red: #ed1e26;
+  --admin-red-hover: #cc141b;
+  --admin-red-dark: #9b0e14;
   --admin-red-tint: #fee2e2;
   --admin-red-subtle: #fff5f5;
+
+  --admin-navy: #272793;
+  --admin-navy-hover: #1e1e75;
+  --admin-navy-dark: #161658;
+  --admin-navy-tint: #e8e8fb;
+  --admin-navy-subtle: #f4f4fd;
 
   --admin-bg: #f8fafc;
   --admin-surface: #ffffff;
@@ -13,7 +19,7 @@
 
   --admin-border: #e2e8f0;
   --admin-border-dark: #cbd5e1;
-  --admin-border-focus: #e4002b;
+  --admin-border-focus: #ed1e26;
 
   --admin-text-main: #0f172a;
   --admin-text-muted: #64748b;
@@ -64,13 +70,32 @@
 }
 
 .brandTitle {
-  font-size: var(--font-size-heading, 1.125rem);
-  font-weight: 800;
-  color: var(--admin-red, #e4002b);
-  letter-spacing: -0.02em;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.headerLogo {
+  height: 34px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+  display: block;
+}
+
+.brandSlash {
+  color: var(--admin-border-dark, #cbd5e1);
+  font-size: 0.95rem;
+  font-weight: 300;
+}
+
+.brandSubtext {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--admin-navy, #272793);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .eventPill {
@@ -85,14 +110,14 @@
   letter-spacing: 0.04em;
   border: 1px solid var(--admin-red-tint, #fee2e2);
   background: var(--admin-red-subtle, #fff5f5);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .liveDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   animation: pulseDot 1.5s infinite;
 }
 
@@ -134,7 +159,7 @@
 }
 
 .timerValueUrgent {
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 .topbarRight {
@@ -157,7 +182,7 @@
 
 .logoutBtn:hover {
   background: var(--admin-red-subtle, #fff5f5);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   border-color: var(--admin-red-tint, #fee2e2);
 }
 
@@ -186,7 +211,7 @@
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   padding: 0 0.5rem 0.5rem;
   border-bottom: 1px solid var(--admin-border, #e2e8f0);
 }
@@ -223,8 +248,8 @@
 
 .problemBtnActive {
   background: var(--admin-red-subtle, #fff5f5) !important;
-  border-color: var(--admin-red, #e4002b) !important;
-  border-left: 4px solid var(--admin-red, #e4002b) !important;
+  border-color: var(--admin-red, #ed1e26) !important;
+  border-left: 4px solid var(--admin-red, #ed1e26) !important;
   font-weight: 700;
 }
 
@@ -245,7 +270,7 @@
 .problemPoints {
   font-size: var(--font-size-micro, 0.75rem);
   font-weight: 700;
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
 }
 
 /* ── Main Split View ─────────────────────────────────────────────────────── */
@@ -295,7 +320,7 @@
 
 .pointsBadge {
   background: var(--admin-red-tint, #fee2e2);
-  color: var(--admin-red, #e4002b);
+  color: var(--admin-red, #ed1e26);
   border: 1px solid #fca5a5;
   font-size: var(--font-size-micro, 0.75rem);
   font-weight: 800;
@@ -379,7 +404,7 @@
 }
 
 .langBadge {
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   color: #ffffff;
   font-size: var(--font-size-micro, 0.75rem);
   font-weight: 800;
@@ -440,9 +465,9 @@
 }
 
 .submitBtn {
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   color: #ffffff;
-  border: 1px solid var(--admin-red, #e4002b);
+  border: 1px solid var(--admin-red, #ed1e26);
   font-weight: 700;
   font-size: var(--font-size-body, 0.875rem);
   padding: 0.45rem 1.25rem;
@@ -563,7 +588,7 @@
   background: var(--admin-surface, #ffffff);
   border-radius: var(--radius-md, 6px);
   border: 1px solid var(--admin-border, #e2e8f0);
-  border-top: 4px solid var(--admin-red, #e4002b);
+  border-top: 4px solid var(--admin-red, #ed1e26);
   width: 100%;
   max-width: 480px;
   display: flex;
@@ -621,9 +646,9 @@
 }
 
 .btnPrimary {
-  background: var(--admin-red, #e4002b);
+  background: var(--admin-red, #ed1e26);
   color: #ffffff;
-  border: 1px solid var(--admin-red, #e4002b);
+  border: 1px solid var(--admin-red, #ed1e26);
   padding: 0.45rem 1.15rem;
   border-radius: var(--radius-sm, 4px);
   font-size: var(--font-size-body, 0.875rem);
