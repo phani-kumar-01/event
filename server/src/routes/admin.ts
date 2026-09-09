@@ -769,12 +769,289 @@ router.post('/students', requireAdmin, async (req: AuthRequest, res: Response): 
   }
 });
 
+router.get('/students/template', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
+  const wsData = [
+    ['SASI Engineers\' Day — Bulk Student Roster Import Template', '', '', '', '', '', ''],
+    ['Fill student details to generate credentials and assign Round 1 access.', '', '', '', '', '', ''],
+    ['', '', '', '', '', '', ''],
+    ['Student_ID / Regd_No', 'Full_Name', 'Department', 'Year', 'Section', 'Email_Address', 'Assigned_Round'],
+    ['22A81A0501', 'Aarav Sharma', 'CSE', '3rd Year', 'A', 'aarav.cse@sasi.ac.in', 'Round 1'],
+    ['22A81A0502', 'Bhavya Reddy', 'CSE', '3rd Year', 'B', 'bhavya.cse@sasi.ac.in', 'Round 1'],
+    ['22A81A0401', 'Chaitanya Verma', 'ECE', '3rd Year', 'A', 'chaitanya.ece@sasi.ac.in', 'Round 1'],
+    ['22A81A1201', 'Divya Sri', 'IT', '2nd Year', 'A', 'divya.it@sasi.ac.in', 'Round 1'],
+    ['22A81A0201', 'Eswar Kumar', 'EEE', '4th Year', 'A', 'eswar.eee@sasi.ac.in', 'Round 1'],
+    ['22A81A0301', 'Farhan Ahmed', 'MECH', '3rd Year', 'A', 'farhan.mech@sasi.ac.in', 'Round 1'],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Student Roster Import');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="SASI_Student_Roster_Import_Template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
+router.post(
+  '/students/import-excel',
+  requireAdmin,
+  upload.single('file'),
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    if (!req.file) {
+      res.status(400).json({ error: 'No Excel file uploaded' });
+      return;
+    }
+
+    let wb: XLSX.WorkBook;
+    try {
+      wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    } catch {
+      res.status(400).json({ error: 'Invalid Excel file format' });
+      return;
+    }
+
+    const sheetName = wb.SheetNames.includes('Student Roster Import')
+      ? 'Student Roster Import'
+      : wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+
+    // Find header row
+    let headerRowIdx = -1;
+    for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+      const row = rawRows[i] as string[];
+      if (
+        row.some(
+          (cell) =>
+            typeof cell === 'string' &&
+            (cell.toLowerCase().includes('student') ||
+              cell.toLowerCase().includes('regd') ||
+              cell.toLowerCase().includes('roll'))
+        )
+      ) {
+        headerRowIdx = i;
+        break;
+      }
+    }
+
+    if (headerRowIdx === -1) {
+      res.status(400).json({ error: 'Could not detect column headers in the uploaded Excel worksheet.' });
+      return;
+    }
+
+    const headers = (rawRows[headerRowIdx] as string[]).map((h) => String(h || '').trim().toLowerCase());
+    const regdCol = headers.findIndex((h) => h.includes('student') || h.includes('regd') || h.includes('roll'));
+    const nameCol = headers.findIndex((h) => h.includes('name'));
+
+    if (regdCol === -1 || nameCol === -1) {
+      res.status(400).json({ error: 'Excel sheet must contain at least Student ID/Regd No and Full Name columns.' });
+      return;
+    }
+
+    const bcrypt = await import('bcryptjs');
+    const defaultPasswordHash = await bcrypt.hash('student123', 10);
+
+    const imported: { rollNo: string; name: string }[] = [];
+    const errors: string[] = [];
+
+    for (let r = headerRowIdx + 1; r < rawRows.length; r++) {
+      const row = rawRows[r] as unknown[];
+      if (!row || row.length === 0) continue;
+
+      const rollNo = String(row[regdCol] || '').trim().toUpperCase();
+      const name = String(row[nameCol] || '').trim();
+
+      if (!rollNo || !name) continue;
+
+      try {
+        await prisma.user.upsert({
+          where: { rollNo },
+          create: {
+            rollNo,
+            name,
+            passwordHash: defaultPasswordHash,
+            role: 'STUDENT',
+          },
+          update: {
+            name,
+          },
+        });
+        imported.push({ rollNo, name });
+      } catch (err) {
+        errors.push(`Row ${r + 1}: ${rollNo} - ${(err as Error).message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      importedCount: imported.length,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  }
+);
+
 router.delete('/students/:id', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
   await prisma.user.delete({ where: { id: String(req.params.id) } }).catch(() => null);
   res.json({ success: true });
 });
 
-// ─── Results / Leaderboards ───────────────────────────────────────────────────
+// ─── Results / Leaderboards & Excel Export ─────────────────────────────────────
+
+router.get('/leaderboard/export-excel', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
+  const eventId = req.query.eventId ? String(req.query.eventId) : undefined;
+  
+  let targetEvent = eventId 
+    ? await prisma.event.findUnique({ where: { id: eventId } }) 
+    : await prisma.event.findFirst({ where: { status: { in: ['RUNNING', 'PAUSED', 'FINISHED'] } } });
+
+  if (!targetEvent) {
+    targetEvent = await prisma.event.findFirst();
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  if (targetEvent && targetEvent.type === 'TECHNICAL_QUIZ') {
+    // 1. Overall Leaderboard
+    const qualifications = await prisma.quizQualification.findMany({
+      where: { eventId: targetEvent.id },
+      include: { user: { select: { rollNo: true, name: true } } },
+      orderBy: [{ finalRank: 'asc' }, { round1Rank: 'asc' }],
+    });
+
+    const rows: (string | number)[][] = [
+      ['SASI Engineers\' Day — Live Event Official Leaderboard & Round 2 Qualifiers', '', '', '', '', '', ''],
+      ['Auto-calculated rankings with Department/Year breakdown and tie-breaker response latency.', '', '', '', '', '', ''],
+      ['', '', '', '', '', '', ''],
+      ['Rank', 'Regd_No', 'Student_Name', 'Round_1_Score', 'Round_2_Score', 'Final_Score', 'Total_Time_Sec', 'Round_2_Status'],
+    ];
+
+    if (qualifications.length > 0) {
+      qualifications.forEach((q, idx) => {
+        const rank = q.finalRank || q.round1Rank || idx + 1;
+        const status = q.isQualified ? 'QUALIFIED (Round 2)' : (rank <= 10 ? 'QUALIFIED (Round 2)' : 'Participant');
+        rows.push([
+          rank,
+          q.user.rollNo,
+          q.user.name,
+          q.round1Score,
+          q.round2Score,
+          q.finalScore || q.round1Score,
+          (q.round1Time || 0) + (q.round2Time || 0),
+          status,
+        ]);
+      });
+    } else {
+      // Fallback from raw answers
+      const answers = await prisma.answer.groupBy({
+        by: ['userId'],
+        where: { eventId: targetEvent.id },
+        _sum: { pointsAwarded: true, timeTakenSeconds: true },
+        _count: { id: true },
+      });
+
+      const users = await prisma.user.findMany({
+        where: { id: { in: answers.map((a) => a.userId) } },
+        select: { id: true, rollNo: true, name: true },
+      });
+      const userMap = Object.fromEntries(users.map((u) => [u.id, u]));
+
+      const sorted = answers
+        .map((a) => ({
+          user: userMap[a.userId],
+          score: a._sum.pointsAwarded || 0,
+          timeTaken: a._sum.timeTakenSeconds || 0,
+        }))
+        .sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
+
+      sorted.forEach((item, idx) => {
+        const rank = idx + 1;
+        const status = rank <= 10 ? 'QUALIFIED (Round 2)' : 'Participant';
+        rows.push([
+          rank,
+          item.user?.rollNo || 'N/A',
+          item.user?.name || 'N/A',
+          item.score,
+          0,
+          item.score,
+          item.timeTaken,
+          status,
+        ]);
+      });
+    }
+
+    const ws1 = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Overall Leaderboard');
+
+    // 2. Department Breakdown
+    const deptRows: (string | number)[][] = [
+      ['Department Breakdown & Distribution', '', '', ''],
+      ['', '', '', ''],
+      ['Department', 'Participant Count', 'Top Score', 'Average Score'],
+    ];
+
+    const allStudents = await prisma.user.findMany({ where: { role: 'STUDENT' } });
+    const deptMap: Record<string, number> = {};
+    allStudents.forEach((s) => {
+      // Infer department from rollNo if standard SASI pattern (e.g., 22A81A05xx => CSE)
+      let dept = 'GENERAL';
+      const upper = s.rollNo.toUpperCase();
+      if (upper.includes('05') || upper.startsWith('CS')) dept = 'CSE';
+      else if (upper.includes('04') || upper.startsWith('EC')) dept = 'ECE';
+      else if (upper.includes('12') || upper.startsWith('IT')) dept = 'IT';
+      else if (upper.includes('02') || upper.startsWith('EE')) dept = 'EEE';
+      else if (upper.includes('03') || upper.startsWith('ME')) dept = 'MECH';
+      deptMap[dept] = (deptMap[dept] || 0) + 1;
+    });
+
+    Object.entries(deptMap).forEach(([dept, count]) => {
+      deptRows.push([dept, count, 'Recorded', 'Active']);
+    });
+
+    const ws2 = XLSX.utils.aoa_to_sheet(deptRows);
+    XLSX.utils.book_append_sheet(wb, ws2, 'Department Breakdown');
+  } else {
+    // Debugging Event Leaderboard
+    const submissions = await prisma.submission.groupBy({
+      by: ['userId'],
+      where: { ...(targetEvent && { eventId: targetEvent.id }) },
+      _sum: { pointsAwarded: true },
+      _count: { id: true },
+    });
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: submissions.map((s) => s.userId) } },
+      select: { id: true, rollNo: true, name: true },
+    });
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u]));
+
+    const sorted = submissions
+      .map((s) => ({
+        user: userMap[s.userId],
+        score: s._sum.pointsAwarded || 0,
+        count: s._count.id || 0,
+      }))
+      .sort((a, b) => b.score - a.score);
+
+    const rows: (string | number)[][] = [
+      ['SASI Engineers\' Day — C Debugging Arena Final Leaderboard', '', '', ''],
+      ['', '', '', ''],
+      ['Rank', 'Regd_No', 'Student_Name', 'Total_Points', 'Problems_Submitted'],
+    ];
+
+    sorted.forEach((item, idx) => {
+      rows.push([idx + 1, item.user?.rollNo || 'N/A', item.user?.name || 'N/A', item.score, item.count]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, 'Debugging Standings');
+  }
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="SASI_Engineers_Day_Leaderboard.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
 
 router.get('/results', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
   const events = await prisma.event.findMany();
@@ -803,7 +1080,6 @@ router.get('/results', requireAdmin, async (_req: AuthRequest, res: Response): P
         .map((u) => ({ ...u, totalPoints: userPoints[u.id] || 0 }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
     } else {
-      // Technical Quiz: Return complete results with Round 1, Round 2, and Final Ranks
       const qualifications = await prisma.quizQualification.findMany({
         where: { eventId: event.id },
         include: { user: { select: { id: true, rollNo: true, name: true } } },
@@ -822,7 +1098,6 @@ router.get('/results', requireAdmin, async (_req: AuthRequest, res: Response): P
           finalRank: q.finalRank,
         }));
       } else {
-        // Fallback if qualifications not computed yet
         const answers = await prisma.answer.groupBy({
           by: ['userId'],
           where: { eventId: event.id },

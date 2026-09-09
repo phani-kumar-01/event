@@ -188,6 +188,8 @@ export default function AdminPage() {
   // Students
   const [students, setStudents] = useState<Student[]>([]);
   const [studentModal, setStudentModal] = useState<boolean>(false);
+  const [studentImportStatus, setStudentImportStatus] = useState<string>('');
+  const studentFileInputRef = useRef<HTMLInputElement>(null);
   const [newStudent, setNewStudent] = useState({ rollNo: '', name: '', password: '' });
 
   // ── 1. Load Events ─────────────────────────────────────────────────────────
@@ -614,6 +616,26 @@ export default function AdminPage() {
       setTimeout(() => setImportStatus(''), 4000);
     } catch {
       setImportStatus('Import failed');
+    }
+  }
+
+  async function handleStudentImportExcel(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      setStudentImportStatus('Importing roster...');
+      const res = await api.post<{ success: boolean; importedCount: number }>('/admin/students/import-excel', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setStudentImportStatus(`✅ Successfully imported ${res.data.importedCount} student accounts!`);
+      loadTabData();
+      setTimeout(() => setStudentImportStatus(''), 5000);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Import failed';
+      setStudentImportStatus(`⚠️ ${msg}`);
+      setTimeout(() => setStudentImportStatus(''), 5000);
     }
   }
 
@@ -1171,6 +1193,26 @@ export default function AdminPage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                <button
+                  className={styles.btnSecondary}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap' }}
+                  onClick={async () => {
+                    try {
+                      const res = await api.get('/admin/leaderboard/export-excel', { responseType: 'blob' });
+                      const url = window.URL.createObjectURL(new Blob([res.data]));
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.setAttribute('download', 'SASI_Engineers_Day_Leaderboard.xlsx');
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } catch {
+                      alert('Failed to export leaderboard');
+                    }
+                  }}
+                >
+                  📊 Export Excel
+                </button>
               </div>
             </div>
 
@@ -1614,6 +1656,45 @@ export default function AdminPage() {
                 <span>👥 Registered Students ({students.length})</span>
               </div>
               <div className={styles.panelActions}>
+                {studentImportStatus && (
+                  <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 700, color: 'var(--admin-red)' }}>
+                    {studentImportStatus}
+                  </span>
+                )}
+                <input
+                  type="file"
+                  ref={studentFileInputRef}
+                  style={{ display: 'none' }}
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleStudentImportExcel}
+                />
+                <button
+                  className={styles.btnSecondary}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  onClick={async () => {
+                    try {
+                      const res = await api.get('/admin/students/template', { responseType: 'blob' });
+                      const url = window.URL.createObjectURL(new Blob([res.data]));
+                      const link = document.createElement('a');
+                      link.href = url;
+                      link.setAttribute('download', 'SASI_Student_Roster_Import_Template.xlsx');
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } catch {
+                      alert('Failed to download student template');
+                    }
+                  }}
+                >
+                  📄 Download Template
+                </button>
+                <button
+                  className={styles.btnSecondary}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  onClick={() => studentFileInputRef.current?.click()}
+                >
+                  📥 Import Roster (.xlsx)
+                </button>
                 <button className={styles.btnPrimary} onClick={() => setStudentModal(true)}>
                   + Add Student
                 </button>
