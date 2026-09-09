@@ -95,6 +95,14 @@ export default function DebuggingPage() {
   const [activeConsoleTab, setActiveConsoleTab] = useState<'TESTS' | 'TERMINAL'>('TESTS');
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  }, []);
 
   const isEventRunning = event?.status === 'RUNNING';
   const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
@@ -308,7 +316,7 @@ export default function DebuggingPage() {
     setActiveConsoleTab('TESTS');
 
     try {
-      const res = await api.post<{ submission: SubmissionResult }>(
+      const res = await api.post<{ success: boolean; message?: string; submission: SubmissionResult; nextProblemId?: string }>(
         '/debugging/execute',
         {
           problemId: currentProblem.id,
@@ -316,17 +324,33 @@ export default function DebuggingPage() {
           mode: 'SUBMIT',
         }
       );
+
       const submission = res.data.submission;
       setSubmitResult(submission);
 
-      if (submission.result === 'ACCEPTED') {
+      if (submission.result === 'ACCEPTED' || res.data.success) {
         setSolvedProblemIds((prev) => new Set([...prev, currentProblem.id]));
+
+        const nextIdx = selectedIndex + 1;
+        if (nextIdx < problems.length) {
+          showToast(`🎉 Correct Output! Problem #${nextIdx + 1} Unlocked.`, 'success');
+          // Auto-switch to newly unlocked problem
+          setTimeout(() => {
+            setSelectedIndex(nextIdx);
+            setRunResult(null);
+            setSubmitResult(null);
+          }, 800);
+        } else {
+          showToast('🎉 All debugging problems solved! Outstanding performance!', 'success');
+        }
       }
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        'Submission failed';
-      alert(msg);
+      const respData = (err as { response?: { data?: { error?: string; submission?: SubmissionResult } } })?.response?.data;
+      if (respData?.submission) {
+        setSubmitResult(respData.submission);
+      }
+      const msg = respData?.error || 'Submission failed: Output mismatch or execution error.';
+      showToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -378,6 +402,17 @@ export default function DebuggingPage() {
 
   return (
     <div className={styles.page}>
+      {/* ── Toast Alert Banner ────────────────────────────────────────────── */}
+      {toast && (
+        <div
+          className={`${styles.toastBanner} ${
+            toast.type === 'success' ? styles.toastSuccess : styles.toastError
+          }`}
+        >
+          <span>{toast.message}</span>
+        </div>
+      )}
+
       {/* ── Persistent Top Bar ────────────────────────────────────────────── */}
       <header className={styles.topbar}>
         <div className={styles.topbarLeft}>
