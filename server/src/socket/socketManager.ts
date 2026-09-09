@@ -44,6 +44,28 @@ export function initSocket(io: Server): void {
       // Cleanup handled automatically by Socket.IO
     });
   });
+
+  // Broadcast synchronized server timer ticks every 1 second for active events
+  setInterval(async () => {
+    try {
+      const runningEvents = await prisma.event.findMany({
+        where: { status: 'RUNNING' },
+        select: { id: true, endTime: true, status: true },
+      });
+
+      const now = Date.now();
+      for (const ev of runningEvents) {
+        const remainingSeconds = Math.max(0, Math.floor((ev.endTime.getTime() - now) / 1000));
+        io.to(`event:${ev.id}`).emit('timer:tick', {
+          eventId: ev.id,
+          remainingSeconds,
+          serverTime: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Ignore background interval query errors during migration/shutdown
+    }
+  }, 1000);
 }
 
 /**

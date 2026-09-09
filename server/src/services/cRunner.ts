@@ -100,6 +100,8 @@ const DANGEROUS_PATTERNS = [
 export function normalizeOutput(s: string): string {
   if (!s) return '';
   return s
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .split('\n')
     .map((line) => line.trimEnd())
     .join('\n')
@@ -166,6 +168,7 @@ export function compileAndRunC(
       });
     });
 
+    // Only fail compilation if exit code != 0 / process error occurred; ignore compiler warnings on code 0
     if (compileResult.error) {
       await cleanup();
       const errMsg = compileResult.stderr || compileResult.error.message || 'Compilation failed';

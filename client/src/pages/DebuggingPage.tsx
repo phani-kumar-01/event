@@ -104,10 +104,17 @@ export default function DebuggingPage() {
     }, 4500);
   }, []);
 
+  const [serverRemaining, setServerRemaining] = useState<number | null>(null);
   const isEventRunning = event?.status === 'RUNNING';
-  const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
+  const { formatted: localTimeFormatted, remaining: localRemaining } = useTimer(isEventRunning ? event?.endTime : null);
 
-  // ── Fetch current event, problems & submissions ─────────────────────────────
+  const displayRemaining = serverRemaining !== null ? serverRemaining : localRemaining;
+  const timeFormatted =
+    serverRemaining !== null
+      ? `${String(Math.floor(serverRemaining / 60)).padStart(2, '0')}:${String(serverRemaining % 60).padStart(2, '0')}`
+      : localTimeFormatted;
+
+  // ── Fetch current event, problems & submissions with progress sync ──────────
   const loadEventAndProblems = useCallback(async () => {
     try {
       const res = await api.get<{ event: Event | null }>('/current-event');
@@ -126,21 +133,23 @@ export default function DebuggingPage() {
       setEvent(currentEvent);
       setEventVersion(currentEvent.version);
 
-      const [probRes, subRes] = await Promise.all([
+      const [probRes, subRes, progressRes] = await Promise.all([
         api.get<{ problems: Problem[] }>(`/events/${currentEvent.id}/debugging-problems`),
         api.get<{ submissions: Submission[] }>(`/events/${currentEvent.id}/my-submissions`).catch(() => ({ data: { submissions: [] } })),
+        api.get<{ solvedProblemIds: string[] }>('/debugging/progress').catch(() => ({ data: { solvedProblemIds: [] } })),
       ]);
 
       const fetchedProblems = probRes.data.problems;
       setProblems(fetchedProblems);
 
-      // Determine solved problems
+      // Determine solved problems by combining submissions & progress sync
       const solvedSet = new Set<string>();
       (subRes.data.submissions || []).forEach((s) => {
         if (s.result === 'ACCEPTED') {
           solvedSet.add(s.problemId);
         }
       });
+      (progressRes.data.solvedProblemIds || []).forEach((id) => solvedSet.add(id));
       setSolvedProblemIds(solvedSet);
 
       // Initialize code map with buggyCode if not yet set
@@ -177,7 +186,7 @@ export default function DebuggingPage() {
     loadEventAndProblems();
   }, [loadEventAndProblems]);
 
-  // ── Socket.IO: event state changes & problem solved notifications ──────────
+  // ── Socket.IO: event state changes, problem solved & server timer ticks ────
   useEffect(() => {
     const socket = getSocket();
 
@@ -222,6 +231,12 @@ export default function DebuggingPage() {
       }
     }
 
+    function handleTimerTick(data: { eventId: string; remainingSeconds: number }) {
+      if (event && data.eventId === event.id) {
+        setServerRemaining(data.remainingSeconds);
+      }
+    }
+
     async function handleReconnect() {
       if (!event) return;
       await loadEventAndProblems();
@@ -231,12 +246,14 @@ export default function DebuggingPage() {
     socket.on('event.state_changed', handleStateChange);
     socket.on('debugging:problem_solved', handleProblemSolved);
     socket.on('PROBLEM_SOLVED', handleProblemSolved);
+    socket.on('timer:tick', handleTimerTick);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('event.state_changed', handleStateChange);
       socket.off('debugging:problem_solved', handleProblemSolved);
       socket.off('PROBLEM_SOLVED', handleProblemSolved);
+      socket.off('timer:tick', handleTimerTick);
       socket.off('connect', handleReconnect);
     };
   }, [event, eventVersion, loadEventAndProblems, navigate, user?.id]);
@@ -436,7 +453,7 @@ export default function DebuggingPage() {
             <span className={styles.timerLabel}>Time Remaining:</span>
             <span
               className={`${styles.timerValue} ${
-                isEventRunning && remaining < 300 ? styles.timerValueUrgent : ''
+                isEventRunning && displayRemaining < 300 ? styles.timerValueUrgent : ''
               }`}
             >
               {isEventRunning
