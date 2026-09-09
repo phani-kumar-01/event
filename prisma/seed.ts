@@ -1,4 +1,4 @@
-import { PrismaClient, QuestionCategory } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -318,7 +318,7 @@ async function main() {
     eventId: string;
     challengeId: string;
     round: number;
-    category: QuestionCategory;
+    category: string;
     type: string;
     question: string;
     imageUrl?: string;

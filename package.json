@@ -5,5 +5,9 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "node server/prisma/seed.js"
   }
 }

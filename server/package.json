@@ -43,6 +43,6 @@
   },
   "prisma": {
     "schema": "../prisma/schema.prisma",
-    "seed": "ts-node ../prisma/seed.ts"
+    "seed": "ts-node --project tsconfig.json --transpile-only ../prisma/seed.ts"
   }
 }
