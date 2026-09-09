@@ -222,11 +222,13 @@ export default function DebuggingPage() {
 
     socket.on('event.state_changed', handleStateChange);
     socket.on('debugging:problem_solved', handleProblemSolved);
+    socket.on('PROBLEM_SOLVED', handleProblemSolved);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('event.state_changed', handleStateChange);
       socket.off('debugging:problem_solved', handleProblemSolved);
+      socket.off('PROBLEM_SOLVED', handleProblemSolved);
       socket.off('connect', handleReconnect);
     };
   }, [event, eventVersion, loadEventAndProblems, navigate, user?.id]);
@@ -272,16 +274,16 @@ export default function DebuggingPage() {
 
   // ── Run Sample (Local Test Case Evaluation) ──────────────────────────────
   async function handleRunSample() {
-    if (!event || event.status !== 'RUNNING' || !currentProblem) return;
+    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem) return;
     setRunning(true);
     setRunResult(null);
     setActiveConsoleTab('TESTS');
 
     try {
-      const res = await api.post<RunResult>(`/events/${event.id}/run-code`, {
-        code: currentCode,
+      const res = await api.post<RunResult>('/debugging/execute', {
         problemId: currentProblem.id,
-        input: currentProblem.sampleInput || '',
+        sourceCode: currentCode,
+        mode: 'RUN',
       });
       setRunResult(res.data);
     } catch (err: unknown) {
@@ -290,7 +292,7 @@ export default function DebuggingPage() {
         output: '',
         error:
           (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-          'Execution failed or timed out (5.0s sandbox limit)',
+          'Execution failed or timed out (2.0s sandbox limit)',
       });
     } finally {
       setRunning(false);
@@ -299,7 +301,7 @@ export default function DebuggingPage() {
 
   // ── Submit Solution (Both Sample + Hidden Test Cases) ────────────────────
   async function confirmAndSubmit() {
-    if (!event || event.status !== 'RUNNING' || !currentProblem || submitting) return;
+    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem || submitting) return;
     setSubmitting(true);
     setSubmitResult(null);
     setConfirmModalOpen(false);
@@ -307,10 +309,11 @@ export default function DebuggingPage() {
 
     try {
       const res = await api.post<{ submission: SubmissionResult }>(
-        `/events/${event.id}/submit-code`,
+        '/debugging/execute',
         {
           problemId: currentProblem.id,
-          code: currentCode,
+          sourceCode: currentCode,
+          mode: 'SUBMIT',
         }
       );
       const submission = res.data.submission;

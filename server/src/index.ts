@@ -7,6 +7,7 @@ import { initSocket } from './socket/socketManager';
 import authRoutes from './routes/auth';
 import studentRoutes from './routes/student';
 import adminRoutes from './routes/admin';
+import debuggingRoutes from './routes/debugging';
 import path from 'path';
 import fs from 'fs';
 import { errorHandler } from './middleware/errorHandler';
@@ -62,6 +63,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api', studentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/debugging', debuggingRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {
