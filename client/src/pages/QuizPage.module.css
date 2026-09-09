@@ -443,14 +443,35 @@
 .imageContainer {
   display: flex;
   justify-content: center;
-  margin: 0.25rem 0;
+  align-items: center;
+  margin: 0.5rem 0;
+  width: 100%;
+}
+
+.guessTechImageContainer {
+  margin: 0.75rem 0 1.25rem 0;
+  background: var(--admin-surface-alt, #f8fafc);
+  border: 1px solid var(--admin-border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  padding: 0.75rem;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .questionImage {
   max-height: 220px;
-  border-radius: var(--radius-sm, 4px);
+  max-width: 100%;
+  border-radius: var(--radius-sm, 6px);
   border: 1px solid var(--admin-border, #e2e8f0);
-  object-fit: cover;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.guessTechImage {
+  max-height: 320px;
+  width: auto;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--admin-border-dark, #cbd5e1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .questionPrompt {

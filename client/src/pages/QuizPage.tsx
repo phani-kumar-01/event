@@ -606,13 +606,19 @@ export default function QuizPage() {
                 <span className={styles.pointsBadge}>{currentQuestion.points} pts</span>
               </div>
 
-              {/* Visual image if provided */}
+              {/* Visual image if provided (prominently centered above options for GUESS_THE_TECH) */}
               {currentQuestion.imageUrl && (
-                <div className={styles.imageContainer}>
+                <div
+                  className={`${styles.imageContainer} ${
+                    currentChallenge?.type === 'GUESS_THE_TECH' ? styles.guessTechImageContainer : ''
+                  }`}
+                >
                   <img
                     src={currentQuestion.imageUrl}
-                    alt="Visual Clue"
-                    className={styles.questionImage}
+                    alt="Visual Clue / Tech Architecture"
+                    className={`${styles.questionImage} ${
+                      currentChallenge?.type === 'GUESS_THE_TECH' ? styles.guessTechImage : ''
+                    }`}
                   />
                 </div>
               )}

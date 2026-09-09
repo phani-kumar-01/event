@@ -7,11 +7,22 @@ import { initSocket } from './socket/socketManager';
 import authRoutes from './routes/auth';
 import studentRoutes from './routes/student';
 import adminRoutes from './routes/admin';
-import themeRoutes from './routes/theme';
+import path from 'path';
+import fs from 'fs';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
 const httpServer = createServer(app);
+
+// Ensure uploads directories exist
+const uploadsDir = path.join(__dirname, '../uploads');
+const questionsUploadDir = path.join(uploadsDir, 'questions');
+if (!fs.existsSync(questionsUploadDir)) {
+  fs.mkdirSync(questionsUploadDir, { recursive: true });
+}
+
+// Serve uploads statically
+app.use('/uploads', express.static(uploadsDir));
 
 const allowedOrigins = [
   'http://localhost:5173',
@@ -51,7 +62,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api', studentRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api', themeRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

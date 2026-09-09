@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, QuestionCategory } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -304,7 +304,23 @@ async function main() {
   console.log('✅ 8 Challenges created across Round 1 & Round 2');
 
   // ─── 6. Questions for Round 1 & Round 2 ───────────────────────────────
-  const questionsData = [
+  const questionsData: Array<{
+    eventId: string;
+    challengeId: string;
+    round: number;
+    category: QuestionCategory;
+    type: string;
+    question: string;
+    imageUrl?: string;
+    optionA: string;
+    optionB: string;
+    optionC: string;
+    optionD: string;
+    correctAnswer: string;
+    explanation: string;
+    points: number;
+    order: number;
+  }> = [
     // ─── ROUND 1: RAPID FIRE ───
     {
       eventId: quizEvent.id,
@@ -408,7 +424,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c2.id,
       round: 1,
-      category: 'VISUAL',
+      category: 'FOUNDERS',
       type: 'MCQ',
       question: 'Clue: Founded in 1993 by Jensen Huang, Chris Malachowsky, and Curtis Priem. Its CUDA architecture powers modern AI training worldwide. Which company is it?',
       optionA: 'Intel Corporation',
@@ -424,7 +440,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c2.id,
       round: 1,
-      category: 'VISUAL',
+      category: 'FOUNDERS',
       type: 'MCQ',
       question: 'Clue: First launched in 2008 on the HTC Dream (T-Mobile G1), its versions were historically named after desserts (Cupcake, Donut, Froyo, KitKat). What is this OS?',
       optionA: 'Symbian OS',
@@ -440,7 +456,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c2.id,
       round: 1,
-      category: 'VISUAL',
+      category: 'GADGETS',
       type: 'MCQ',
       question: 'Clue: A single-board computer originally designed in the UK to teach basic computer science in schools, selling over 40 million units. What is it?',
       optionA: 'Arduino Uno',
@@ -456,7 +472,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c2.id,
       round: 1,
-      category: 'VISUAL',
+      category: 'FOUNDERS',
       type: 'MCQ',
       question: 'Clue: Created by Brendan Eich at Netscape in just 10 days in May 1995 under the initial code name "Mocha". What language is this?',
       optionA: 'Java',
@@ -474,7 +490,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c3.id,
       round: 1,
-      category: 'CHRONOLOGY',
+      category: 'FOUNDERS',
       type: 'SHUFFLE_ORDER',
       question: 'Arrange these historic computing milestones from EARLIEST to MOST RECENT:',
       optionA: '1. Launch of the World Wide Web (CERN)',
@@ -490,7 +506,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r1c3.id,
       round: 1,
-      category: 'CHRONOLOGY',
+      category: 'CYBERSECURITY',
       type: 'SHUFFLE_ORDER',
       question: 'Arrange the sequence of a standard TLS/HTTPS Handshake connection from START to FINISH:',
       optionA: '1. Client Hello (supported ciphers & random number)',
@@ -508,7 +524,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c1.id,
       round: 2,
-      category: 'AI_DEEP_TECH',
+      category: 'AI',
       type: 'MCQ',
       question: 'What revolutionary deep learning architecture, introduced in Google’s 2017 paper "Attention Is All You Need", replaced RNNs and powers all modern LLMs?',
       optionA: 'Convolutional Neural Network (CNN)',
@@ -524,7 +540,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c1.id,
       round: 2,
-      category: 'QUANTUM',
+      category: 'AI',
       type: 'MCQ',
       question: 'In quantum computing, what property allows qubits to be in a linear combination of both |0⟩ and |1⟩ states simultaneously?',
       optionA: 'Quantum Tunneling',
@@ -540,7 +556,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c1.id,
       round: 2,
-      category: 'CHIPS',
+      category: 'GADGETS',
       type: 'MCQ',
       question: 'Which semiconductor manufacturing company based in Hsinchu, Taiwan produces over 90% of the world\'s most advanced sub-5nm microchips?',
       optionA: 'GlobalFoundries',
@@ -558,7 +574,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c2.id,
       round: 2,
-      category: 'SPACE_TECH',
+      category: 'SPACE',
       type: 'MCQ',
       question: 'In October 2024, SpaceX achieved a historic aerospace milestone with Starship Flight 5 by doing what unprecedented maneuver?',
       optionA: 'Landing Starship on the surface of Mars autonomously',
@@ -574,7 +590,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c2.id,
       round: 2,
-      category: 'AI_REVOLUTION',
+      category: 'AI',
       type: 'MCQ',
       question: 'What is the benchmark technique called where reasoning models generate hidden "Chain-of-Thought" tokens before generating their final answer to solve complex logic?',
       optionA: 'Inference-time Compute / System 2 Reasoning',
@@ -592,7 +608,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c3.id,
       round: 2,
-      category: 'REAL_OR_FAKE',
+      category: 'FOUNDERS',
       type: 'REAL_OR_FAKE',
       question: 'In 1986, Apple released a full fashion clothing line including pastel sweatshirts, windbreakers, and graphic t-shirts called "The Apple Collection".',
       optionA: 'REAL',
@@ -608,7 +624,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c3.id,
       round: 2,
-      category: 'REAL_OR_FAKE',
+      category: 'GADGETS',
       type: 'REAL_OR_FAKE',
       question: 'The first computer mouse invented by Douglas Engelbart in 1964 was carved out of solid titanium and used an optical laser.',
       optionA: 'REAL',
@@ -624,7 +640,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c3.id,
       round: 2,
-      category: 'REAL_OR_FAKE',
+      category: 'CYBERSECURITY',
       type: 'REAL_OR_FAKE',
       question: 'Over 99% of all international internet data traffic travels through undersea fiber-optic submarine cables rather than satellites.',
       optionA: 'REAL',
@@ -642,7 +658,7 @@ async function main() {
       eventId: quizEvent.id,
       challengeId: r2c4.id,
       round: 2,
-      category: 'GRAND_FINALE',
+      category: 'AI',
       type: 'MCQ',
       question: 'In 1997, IBM’s Deep Blue defeated Garry Kasparov in chess. In 2016, DeepMind’s AlphaGo defeated 18-time world champion Lee Sedol in Go. What famous move in Game 2 shocked Go masters as a display of superhuman creativity?',
       optionA: 'Move 37',
@@ -661,32 +677,12 @@ async function main() {
   }
   console.log(`✅ ${questionsData.length} questions created across all challenges`);
 
-  // ─── 7. Default Theme ────────────────────────────────────────────────
-  await prisma.themeSettings.create({
-    data: {
-      name: 'SASI Red & White Theme',
-      primaryColor: '#8B0000',
-      secondaryColor: '#650000',
-      accentColor: '#F5A623',
-      backgroundColor: '#F7F7F7',
-      surfaceColor: '#FFFFFF',
-      textColor: '#222222',
-      isActive: true,
-      version: 1,
-    },
-  });
-  console.log('✅ Active Red/White theme configured');
-
-  console.log('\n🎉 Database seeded successfully!');
-  console.log('────────────────────────────────────────────────');
-  console.log('🔑 Admin login: ADMIN001 / admin123');
-  console.log('👤 Students: CS001 to CS060 / student123');
-  console.log('────────────────────────────────────────────────');
+  console.log('🏁 Seeding finished successfully!');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seed failed:', e);
+    console.error('❌ Seeding error:', e);
     process.exit(1);
   })
   .finally(async () => {

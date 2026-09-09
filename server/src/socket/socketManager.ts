@@ -4,14 +4,13 @@ import prisma from '../utils/prisma';
 
 export function initSocket(io: Server): void {
   io.use(async (socket: Socket, next) => {
-    // Allow unauthenticated connections to the theme room; authenticate for others
     const token = socket.handshake.auth?.token as string | undefined;
     if (token) {
       try {
         const user = verifyToken(token);
         socket.data.user = user;
       } catch {
-        // Token invalid — still allow connection for theme updates
+        // Token invalid
       }
     }
     next();
@@ -19,9 +18,6 @@ export function initSocket(io: Server): void {
 
   io.on('connection', async (socket: Socket) => {
     const user = socket.data.user;
-
-    // All clients join the global theme room
-    socket.join('theme');
 
     if (user) {
       if (user.role === 'ADMIN') {
@@ -31,7 +27,6 @@ export function initSocket(io: Server): void {
         events.forEach((e) => socket.join(`event:${e.id}`));
         console.log(`🔑 Admin connected: ${user.rollNo}`);
       } else {
-        // Students join their event room based on current time
         console.log(`👤 Student connected: ${user.rollNo}`);
       }
     }
@@ -123,22 +118,4 @@ export function emitEventRoundChanged(
   io.to(`event:${event.id}`).emit('event.state_changed', payload);
   io.to('admin').emit('event.round_changed', payload);
   io.to('admin').emit('event.state_changed', payload);
-}
-
-/**
- * Emit theme update to all connected clients.
- */
-export function emitThemeUpdated(
-  io: Server,
-  theme: {
-    primaryColor: string;
-    secondaryColor: string;
-    accentColor: string;
-    backgroundColor: string;
-    surfaceColor: string;
-    textColor: string;
-    name: string;
-  }
-): void {
-  io.to('theme').emit('theme.updated', { theme });
 }

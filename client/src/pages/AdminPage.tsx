@@ -84,19 +84,31 @@ interface Student {
   createdAt: string;
 }
 
-interface Theme {
-  id: string;
-  name: string;
-  primaryColor: string;
-  secondaryColor: string;
-  accentColor: string;
-  surfaceColor?: string;
-  backgroundColor?: string;
-  isActive: boolean;
-}
-
-type Tab = 'control_room' | 'leaderboard' | 'quiz_hub' | 'debugging' | 'students' | 'appearance';
+type Tab = 'control_room' | 'leaderboard' | 'quiz_hub' | 'debugging' | 'students';
 type LeaderboardFilter = 'active' | 'round1' | 'round2' | 'final' | 'debugging';
+
+function getStageBadgeMeta(type: string): { icon: string; tintClass: string } {
+  switch (type) {
+    case 'RAPID_FIRE':
+      return { icon: '⚡', tintClass: styles.badgeTintAmber };
+    case 'GUESS_THE_TECH':
+      return { icon: '🔍', tintClass: styles.badgeTintBlue };
+    case 'TECH_SHUFFLE':
+      return { icon: '🔀', tintClass: styles.badgeTintPurple };
+    case 'PUZZLE_GRID':
+      return { icon: '🧩', tintClass: styles.badgeTintGreen };
+    case 'TECH_SHOWDOWN':
+      return { icon: '⚔️', tintClass: styles.badgeTintRed };
+    case 'TECH_TODAY':
+      return { icon: '📰', tintClass: styles.badgeTintBlue };
+    case 'REAL_OR_FAKE':
+      return { icon: '⚖️', tintClass: styles.badgeTintAmber };
+    case 'FINAL_CHALLENGE':
+      return { icon: '🏆', tintClass: styles.badgeTintRed };
+    default:
+      return { icon: '🎯', tintClass: styles.badgeTintBlue };
+  }
+}
 
 export default function AdminPage() {
   const { logout } = useAuth();
@@ -132,17 +144,21 @@ export default function AdminPage() {
   const [challengeModal, setChallengeModal] = useState<Partial<QuizChallenge> | null>(null);
   const [quizModal, setQuizModal] = useState<Partial<QuizQuestion> | null>(null);
   const [importStatus, setImportStatus] = useState<string>('');
+  const [imageUploading, setImageUploading] = useState<boolean>(false);
+  const [imageUploadError, setImageUploadError] = useState<string>('');
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [modalFormError, setModalFormError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Debugging Management
   const [problems, setProblems] = useState<DebuggingProblem[]>([]);
   const [debugModal, setDebugModal] = useState<Partial<DebuggingProblem> | null>(null);
 
-  // Students & Themes
+  // Students
   const [students, setStudents] = useState<Student[]>([]);
   const [studentModal, setStudentModal] = useState<boolean>(false);
   const [newStudent, setNewStudent] = useState({ rollNo: '', name: '', password: '' });
-  const [themes, setThemes] = useState<Theme[]>([]);
 
   // ── 1. Load Events ─────────────────────────────────────────────────────────
   const loadEvents = useCallback(async () => {
@@ -257,9 +273,6 @@ export default function AdminPage() {
       } else if (activeTab === 'students') {
         const res = await api.get<{ students: Student[] }>('/admin/students');
         setStudents(res.data.students);
-      } else if (activeTab === 'appearance') {
-        const res = await api.get<{ themes: Theme[] }>('/admin/themes');
-        setThemes(res.data.themes);
       }
     } catch {
       // Ignore
@@ -463,8 +476,55 @@ export default function AdminPage() {
     }
   }
 
+  async function handleQuestionImageUpload(file: File) {
+    if (!file) return;
+    setImageUploadError('');
+    setModalFormError('');
+    setImageUploading(true);
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!validTypes.includes(file.type.toLowerCase())) {
+      setImageUploadError('Invalid format. Only JPG, PNG, and WEBP images are supported.');
+      setImageUploading(false);
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setImageUploadError('File is too large. Maximum size is 5MB.');
+      setImageUploading(false);
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const res = await api.post<{ imageUrl: string }>('/admin/quiz-questions/upload-image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setQuizModal((prev) => (prev ? { ...prev, imageUrl: res.data.imageUrl } : prev));
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Failed to upload image. Please try again.';
+      setImageUploadError(msg);
+    } finally {
+      setImageUploading(false);
+    }
+  }
+
   async function saveQuizQuestion() {
     if (!quizModal) return;
+    setModalFormError('');
+    setImageUploadError('');
+
+    const targetChallenge = challenges.find((c) => c.id === quizModal.challengeId);
+    const isGuessTheTech = targetChallenge?.type === 'GUESS_THE_TECH' || quizModal.type === 'GUESS_IMAGE';
+
+    if (isGuessTheTech && (!quizModal.imageUrl || !quizModal.imageUrl.trim())) {
+      setModalFormError('Image is required for GUESS_THE_TECH challenge questions. Please upload a clue image.');
+      return;
+    }
+
     try {
       if (quizModal.id) {
         await api.patch(`/admin/quiz-questions/${quizModal.id}`, quizModal);
@@ -472,9 +532,13 @@ export default function AdminPage() {
         await api.post('/admin/quiz-questions', quizModal);
       }
       setQuizModal(null);
+      setModalFormError('');
       loadTabData();
-    } catch {
-      alert('Failed to save question');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Failed to save question';
+      setModalFormError(msg);
     }
   }
 
@@ -550,15 +614,6 @@ export default function AdminPage() {
       loadTabData();
     } catch {
       alert('Failed to delete student');
-    }
-  }
-
-  async function activateTheme(id: string) {
-    try {
-      await api.post('/admin/theme/activate', { themeId: id });
-      loadTabData();
-    } catch {
-      alert('Failed to activate theme');
     }
   }
 
@@ -860,7 +915,6 @@ export default function AdminPage() {
           { id: 'quiz_hub', label: 'Quiz Management' },
           { id: 'debugging', label: 'Debugging Arena' },
           { id: 'students', label: 'Students' },
-          { id: 'appearance', label: 'Theme & Display' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -974,7 +1028,7 @@ export default function AdminPage() {
                       <th style={{ width: '60px' }}>Rank</th>
                       <th>Roll No</th>
                       <th>Name</th>
-                      <th>Score</th>
+                      <th className={styles.thNumeric}>Score</th>
                       <th>Time / Status</th>
                     </tr>
                   </thead>
@@ -1000,7 +1054,7 @@ export default function AdminPage() {
                           <strong>{row.rollNo}</strong>
                         </td>
                         <td>{row.name}</td>
-                        <td>
+                        <td className={styles.tdNumeric}>
                           <strong style={{ color: 'var(--admin-red)' }}>{row.score} pts</strong>
                         </td>
                         <td>
@@ -1089,7 +1143,7 @@ export default function AdminPage() {
                     </th>
                     <th>Name</th>
                     <th
-                      className={styles.tablethSortable}
+                      className={`${styles.tablethSortable} ${styles.thNumeric}`}
                       onClick={() => {
                         setSortField('score');
                         setSortAsc(!sortAsc);
@@ -1098,7 +1152,7 @@ export default function AdminPage() {
                       Score {sortField === 'score' ? (sortAsc ? '▲' : '▼') : ''}
                     </th>
                     <th
-                      className={styles.tablethSortable}
+                      className={`${styles.tablethSortable} ${styles.thNumeric}`}
                       onClick={() => {
                         setSortField('time');
                         setSortAsc(!sortAsc);
@@ -1131,10 +1185,10 @@ export default function AdminPage() {
                         <strong>{row.rollNo}</strong>
                       </td>
                       <td>{row.name}</td>
-                      <td>
+                      <td className={styles.tdNumeric}>
                         <strong style={{ color: 'var(--admin-red)' }}>{row.score} pts</strong>
                       </td>
-                      <td>{row.time ? `${row.time}s` : '—'}</td>
+                      <td className={styles.tdNumeric}>{row.time ? `${row.time}s` : '—'}</td>
                       <td>
                         {row.isQualified ? (
                           <span className={styles.statusQualified}>{row.statusText}</span>
@@ -1160,11 +1214,62 @@ export default function AdminPage() {
         {/* ── TAB 3: QUIZ MANAGEMENT ───────────────────────────────────────── */}
         {activeTab === 'quiz_hub' && (
           <>
-            {/* Stage / Challenge Cards */}
+            {/* Round Switcher Header (Top Controller) */}
+            <div className={styles.commandCard} style={{ padding: '0.85rem 1.25rem' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '0.75rem',
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontWeight: 800,
+                      fontSize: 'var(--font-size-body, 0.875rem)',
+                      color: 'var(--admin-text-main, #0f172a)',
+                    }}
+                  >
+                    Active Round Scope: Round {selectedRoundFilter} {selectedRoundFilter === 1 ? '(Qualifiers — 60 Students)' : '(Championship — Top 10 Finalists)'}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 'var(--font-size-micro, 0.75rem)',
+                      color: 'var(--admin-text-muted, #64748b)',
+                    }}
+                  >
+                    All challenge stages and questions below are scoped to this selected round.
+                  </div>
+                </div>
+                <div className={styles.filterPills}>
+                  <button
+                    className={`${styles.filterPillBtn} ${
+                      selectedRoundFilter === 1 ? styles.filterPillBtnActive : ''
+                    }`}
+                    onClick={() => setSelectedRoundFilter(1)}
+                  >
+                    Round 1 (Qualifiers)
+                  </button>
+                  <button
+                    className={`${styles.filterPillBtn} ${
+                      selectedRoundFilter === 2 ? styles.filterPillBtnActive : ''
+                    }`}
+                    onClick={() => setSelectedRoundFilter(2)}
+                  >
+                    Round 2 (Top 10 Finalists)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 1. Challenge Stages for Selected Round (4 cards) */}
             <div className={styles.panelCard}>
               <div className={styles.panelHeader}>
                 <div className={styles.panelTitle}>
-                  <span>🎯 Quiz Stages &amp; Challenges</span>
+                  <span>🎯 Round {selectedRoundFilter} Challenge Stages ({challenges.filter((c) => c.round === selectedRoundFilter).length})</span>
                 </div>
                 <div className={styles.panelActions}>
                   <button
@@ -1172,83 +1277,74 @@ export default function AdminPage() {
                     onClick={() =>
                       setChallengeModal({
                         round: selectedRoundFilter,
-                        type: 'RAPID_FIRE',
+                        type: selectedRoundFilter === 1 ? 'RAPID_FIRE' : 'TECH_SHOWDOWN',
                         points: 100,
                         isActive: true,
                       })
                     }
                   >
-                    + Add Challenge Stage
+                    + Add Stage to Round {selectedRoundFilter}
                   </button>
                 </div>
               </div>
 
               <div style={{ padding: '1rem' }}>
                 <div className={styles.cardGrid}>
-                  {challenges.map((c) => (
-                    <div key={c.id} className={styles.itemCard}>
-                      <div className={styles.itemCardHeader}>
-                        <div>
-                          <div className={styles.itemTitle}>{c.title}</div>
-                          <div className={styles.itemSub}>
-                            Round {c.round} • {c.type} • {c.points} pts
+                  {challenges
+                    .filter((c) => c.round === selectedRoundFilter)
+                    .map((c) => {
+                      const badge = getStageBadgeMeta(c.type);
+                      return (
+                        <div key={c.id} className={styles.itemCard}>
+                          <div className={styles.itemCardHeader}>
+                            <div className={styles.itemTitleBlock}>
+                              <div className={`${styles.stageIconBadge} ${badge.tintClass}`}>
+                                {badge.icon}
+                              </div>
+                              <div>
+                                <div className={styles.itemTitle}>{c.title}</div>
+                                <div className={styles.itemSub}>
+                                  Round {c.round} • {c.type} • {c.points} pts
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <button
+                                className={styles.btnIcon}
+                                onClick={() => setChallengeModal({ ...c })}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                className={styles.btnIcon}
+                                onClick={() => deleteChallenge(c.id)}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)', marginTop: 'var(--space-2)' }}>
+                            {c.description || c.subtitle || 'No stage description.'}
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.25rem' }}>
-                          <button
-                            className={styles.btnIcon}
-                            onClick={() => setChallengeModal({ ...c })}
-                          >
-                            ✎
-                          </button>
-                          <button
-                            className={styles.btnIcon}
-                            onClick={() => deleteChallenge(c.id)}
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
-                        {c.description || c.subtitle || 'No stage description.'}
-                      </div>
-                    </div>
-                  ))}
-                  {challenges.length === 0 && (
+                      );
+                    })}
+                  {challenges.filter((c) => c.round === selectedRoundFilter).length === 0 && (
                     <div className={styles.emptyState} style={{ gridColumn: '1 / -1' }}>
-                      No challenge stages configured yet.
+                      No challenge stages configured for Round {selectedRoundFilter}.
                     </div>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Questions Table with Round Filters and Excel Import */}
+            {/* 2. Questions Table for Selected Round */}
             <div className={styles.panelCard}>
               <div className={styles.panelHeader}>
                 <div className={styles.panelTitle}>
-                  <span>❓ Question Bank ({quizQuestions.length})</span>
+                  <span>❓ Round {selectedRoundFilter} Question Bank ({quizQuestions.length})</span>
                 </div>
                 <div className={styles.panelActions}>
-                  <div className={styles.filterPills}>
-                    <button
-                      className={`${styles.filterPillBtn} ${
-                        selectedRoundFilter === 1 ? styles.filterPillBtnActive : ''
-                      }`}
-                      onClick={() => setSelectedRoundFilter(1)}
-                    >
-                      Round 1 (Qualifiers)
-                    </button>
-                    <button
-                      className={`${styles.filterPillBtn} ${
-                        selectedRoundFilter === 2 ? styles.filterPillBtnActive : ''
-                      }`}
-                      onClick={() => setSelectedRoundFilter(2)}
-                    >
-                      Round 2 (Top 10)
-                    </button>
-                  </div>
-
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -1280,7 +1376,7 @@ export default function AdminPage() {
                       })
                     }
                   >
-                    + Add Question
+                    + Add Question to Round {selectedRoundFilter}
                   </button>
                 </div>
               </div>
@@ -1294,7 +1390,7 @@ export default function AdminPage() {
                       <th>Type</th>
                       <th>Question Prompt</th>
                       <th>Answer</th>
-                      <th>Points</th>
+                      <th className={styles.thNumeric}>Points</th>
                       <th style={{ width: '110px' }}>Actions</th>
                     </tr>
                   </thead>
@@ -1310,7 +1406,7 @@ export default function AdminPage() {
                         <td>
                           <span className={styles.statusQualified}>{q.correctAnswer}</span>
                         </td>
-                        <td>{q.points}</td>
+                        <td className={styles.tdNumeric}>{q.points}</td>
                         <td>
                           <div style={{ display: 'flex', gap: '0.25rem' }}>
                             <button
@@ -1374,8 +1470,8 @@ export default function AdminPage() {
                   <tr>
                     <th style={{ width: '50px' }}>#</th>
                     <th>Problem Title</th>
-                    <th>Points</th>
-                    <th>Time Limit</th>
+                    <th className={styles.thNumeric}>Points</th>
+                    <th className={styles.thNumeric}>Time Limit</th>
                     <th>Description</th>
                     <th style={{ width: '120px' }}>Actions</th>
                   </tr>
@@ -1387,8 +1483,8 @@ export default function AdminPage() {
                       <td>
                         <strong>{p.title}</strong>
                       </td>
-                      <td>{p.points} pts</td>
-                      <td>{p.timeLimit}s</td>
+                      <td className={styles.tdNumeric}>{p.points} pts</td>
+                      <td className={styles.tdNumeric}>{p.timeLimit}s</td>
                       <td style={{ maxWidth: '350px' }}>{p.description}</td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.35rem' }}>
@@ -1482,45 +1578,6 @@ export default function AdminPage() {
             </div>
           </div>
         )}
-
-        {/* ── TAB 6: THEME SETTINGS ────────────────────────────────────────── */}
-        {activeTab === 'appearance' && (
-          <div className={styles.panelCard}>
-            <div className={styles.panelHeader}>
-              <div className={styles.panelTitle}>
-                <span>🎨 System Display &amp; Themes</span>
-              </div>
-            </div>
-
-            <div style={{ padding: '1.25rem' }}>
-              <div className={styles.cardGrid}>
-                {themes.map((t) => (
-                  <div key={t.id} className={styles.itemCard}>
-                    <div className={styles.itemCardHeader}>
-                      <div>
-                        <div className={styles.itemTitle}>{t.name}</div>
-                        <div className={styles.itemSub}>
-                          Primary: {t.primaryColor} • Accent: {t.accentColor}
-                        </div>
-                      </div>
-                      {t.isActive ? (
-                        <span className={styles.statusQualified}>Active</span>
-                      ) : (
-                        <button
-                          className={styles.btnSecondary}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
-                          onClick={() => activateTheme(t.id)}
-                        >
-                          Activate
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </main>
 
       {/* ── QUALIFY TOP 10 CONFIRMATION MODAL ──────────────────────────────── */}
@@ -1551,8 +1608,8 @@ export default function AdminPage() {
                       <th style={{ width: '50px' }}>Rank</th>
                       <th>Roll No</th>
                       <th>Student Name</th>
-                      <th>Score</th>
-                      <th>Time</th>
+                      <th className={styles.thNumeric}>Score</th>
+                      <th className={styles.thNumeric}>Time</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1577,12 +1634,12 @@ export default function AdminPage() {
                           <strong>{q.user?.rollNo}</strong>
                         </td>
                         <td>{q.user?.name}</td>
-                        <td>
+                        <td className={styles.tdNumeric}>
                           <strong style={{ color: 'var(--admin-red)' }}>
                             {q.round1Score} pts
                           </strong>
                         </td>
-                        <td>{q.round1Time}s</td>
+                        <td className={styles.tdNumeric}>{q.round1Time}s</td>
                       </tr>
                     ))}
                     {qualifyPreviewList.length === 0 && (
@@ -1722,204 +1779,319 @@ export default function AdminPage() {
       )}
 
       {/* ── QUESTION MODAL ───────────────────────────────────────────────── */}
-      {quizModal !== null && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modal}>
-            <div className={styles.modalHeader}>
-              <span className={styles.modalTitle}>
-                {quizModal.id ? 'Edit Question' : 'Add Question'}
-              </span>
-              <button
-                className={styles.modalCloseBtn}
-                onClick={() => setQuizModal(null)}
-              >
-                ×
-              </button>
-            </div>
-            <div className={styles.modalBody}>
-              <div className={styles.formGrid}>
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Round</span>
-                  <select
-                    className={styles.select}
-                    value={quizModal.round ?? selectedRoundFilter}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, round: +e.target.value }))
-                    }
-                  >
-                    <option value={1}>Round 1</option>
-                    <option value={2}>Round 2 (Top 10)</option>
-                  </select>
-                </div>
+      {quizModal !== null && (() => {
+        const targetChallenge = challenges.find((c) => c.id === quizModal.challengeId);
+        const isGuessTheTech = targetChallenge?.type === 'GUESS_THE_TECH' || quizModal.type === 'GUESS_IMAGE';
 
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Stage</span>
-                  <select
-                    className={styles.select}
-                    value={quizModal.challengeId || ''}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, challengeId: e.target.value || null }))
-                    }
-                  >
-                    <option value="">-- General / Any --</option>
-                    {challenges
-                      .filter((c) => c.round === (quizModal.round || selectedRoundFilter))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.title}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Type</span>
-                  <select
-                    className={styles.select}
-                    value={quizModal.type || 'MCQ'}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, type: e.target.value }))
-                    }
-                  >
-                    <option value="MCQ">Multiple Choice (MCQ)</option>
-                    <option value="REAL_OR_FAKE">Real or Fake</option>
-                    <option value="SHUFFLE_ORDER">Tech Shuffle Sequence</option>
-                  </select>
-                </div>
-
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Category</span>
-                  <input
-                    className={styles.input}
-                    value={quizModal.category || 'AI'}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, category: e.target.value }))
-                    }
-                  />
-                </div>
-
-                <div className={styles.formGroupFull}>
-                  <span className={styles.formLabel}>Question Prompt</span>
-                  <textarea
-                    className={styles.textarea}
-                    rows={3}
-                    value={quizModal.question || ''}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, question: e.target.value }))
-                    }
-                  />
-                </div>
-
-                {quizModal.type !== 'REAL_OR_FAKE' && (
-                  <>
-                    <div className={styles.formGroup}>
-                      <span className={styles.formLabel}>Option A</span>
-                      <input
-                        className={styles.input}
-                        value={quizModal.optionA || ''}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, optionA: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className={styles.formGroup}>
-                      <span className={styles.formLabel}>Option B</span>
-                      <input
-                        className={styles.input}
-                        value={quizModal.optionB || ''}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, optionB: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className={styles.formGroup}>
-                      <span className={styles.formLabel}>Option C</span>
-                      <input
-                        className={styles.input}
-                        value={quizModal.optionC || ''}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, optionC: e.target.value }))
-                        }
-                      />
-                    </div>
-                    <div className={styles.formGroup}>
-                      <span className={styles.formLabel}>Option D</span>
-                      <input
-                        className={styles.input}
-                        value={quizModal.optionD || ''}
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, optionD: e.target.value }))
-                        }
-                      />
-                    </div>
-                  </>
+        return (
+          <div className={styles.modalOverlay}>
+            <div className={styles.modal}>
+              <div className={styles.modalHeader}>
+                <span className={styles.modalTitle}>
+                  {quizModal.id ? 'Edit Question' : 'Add Question'}
+                </span>
+                <button
+                  className={styles.modalCloseBtn}
+                  onClick={() => {
+                    setQuizModal(null);
+                    setModalFormError('');
+                    setImageUploadError('');
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <div className={styles.modalBody}>
+                {modalFormError && (
+                  <div className={styles.alertError} style={{ marginBottom: '0.5rem' }}>
+                    <span>⚠️ {modalFormError}</span>
+                    <button
+                      type="button"
+                      className={styles.alertCloseBtn}
+                      onClick={() => setModalFormError('')}
+                    >
+                      ×
+                    </button>
+                  </div>
                 )}
 
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Correct Answer</span>
-                  {quizModal.type === 'REAL_OR_FAKE' ? (
+                <div className={styles.formGrid}>
+                  {/* Group 1: Scope */}
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Round</span>
                     <select
                       className={styles.select}
-                      value={quizModal.correctAnswer || 'REAL'}
+                      value={quizModal.round ?? selectedRoundFilter}
                       onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                        setQuizModal((p) => ({ ...p!, round: +e.target.value }))
                       }
                     >
-                      <option value="REAL">REAL</option>
-                      <option value="FAKE">FAKE</option>
+                      <option value={1}>Round 1</option>
+                      <option value={2}>Round 2 (Top 10)</option>
                     </select>
-                  ) : quizModal.type === 'SHUFFLE_ORDER' ? (
-                    <input
-                      className={styles.input}
-                      value={quizModal.correctAnswer || ''}
-                      placeholder='["1. Step", "2. Step"]'
+                  </div>
+
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Challenge Stage</span>
+                    <select
+                      className={styles.select}
+                      value={quizModal.challengeId || ''}
                       onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                        setQuizModal((p) => ({ ...p!, challengeId: e.target.value || null }))
+                      }
+                    >
+                      <option value="">-- General / Any --</option>
+                      {challenges
+                        .filter((c) => c.round === (quizModal.round || selectedRoundFilter))
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.title} ({c.type})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Group 2: Meta */}
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Type</span>
+                    <select
+                      className={styles.select}
+                      value={quizModal.type || 'MCQ'}
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, type: e.target.value }))
+                      }
+                    >
+                      <option value="MCQ">Multiple Choice (MCQ)</option>
+                      <option value="REAL_OR_FAKE">Real or Fake</option>
+                      <option value="SHUFFLE_ORDER">Tech Shuffle Sequence</option>
+                    </select>
+                  </div>
+
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Category</span>
+                    <select
+                      className={styles.select}
+                      value={quizModal.category || 'AI'}
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, category: e.target.value }))
+                      }
+                    >
+                      <option value="AI">AI</option>
+                      <option value="GADGETS">GADGETS</option>
+                      <option value="CYBERSECURITY">CYBERSECURITY</option>
+                      <option value="SPACE">SPACE</option>
+                      <option value="GAMING">GAMING</option>
+                      <option value="FOUNDERS">FOUNDERS</option>
+                    </select>
+                  </div>
+
+                  {/* Group 3: Image Dropzone ONLY for GUESS_THE_TECH */}
+                  {isGuessTheTech && (
+                    <div className={styles.formGroupFull}>
+                      <span className={styles.formLabel}>
+                        Challenge Image Clue <span style={{ color: 'var(--admin-red)' }}>* (Required)</span>
+                      </span>
+
+                      {quizModal.imageUrl ? (
+                        <div className={styles.imagePreviewContainer}>
+                          <img
+                            src={quizModal.imageUrl}
+                            alt="Question preview"
+                            className={styles.imageThumbnail}
+                          />
+                          <div className={styles.imagePreviewActions}>
+                            <span className={styles.imagePreviewUrl}>{quizModal.imageUrl}</span>
+                            <button
+                              type="button"
+                              className={styles.btnDangerOutline}
+                              style={{ padding: '0.35rem 0.75rem', fontSize: 'var(--font-size-micro)' }}
+                              onClick={() => setQuizModal((p) => ({ ...p!, imageUrl: '' }))}
+                            >
+                              ✕ Remove / Replace Image
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={`${styles.dropzone} ${isDragging ? styles.dropzoneActive : ''}`}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setIsDragging(true);
+                          }}
+                          onDragLeave={() => setIsDragging(false)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setIsDragging(false);
+                            const file = e.dataTransfer.files?.[0];
+                            if (file) handleQuestionImageUpload(file);
+                          }}
+                          onClick={() => imageInputRef.current?.click()}
+                        >
+                          <input
+                            type="file"
+                            ref={imageInputRef}
+                            style={{ display: 'none' }}
+                            accept="image/png,image/jpeg,image/webp,image/jpg"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleQuestionImageUpload(file);
+                            }}
+                          />
+                          <div className={styles.dropzoneIcon}>🖼️</div>
+                          <div className={styles.dropzoneText}>
+                            <strong>Click to browse</strong> or drag &amp; drop clue image here
+                          </div>
+                          <div className={styles.dropzoneSub}>
+                            JPG, PNG, or WEBP • Maximum file size 5MB
+                          </div>
+                          {imageUploading && (
+                            <div className={styles.uploadSpinner}>Uploading image...</div>
+                          )}
+                        </div>
+                      )}
+                      {imageUploadError && (
+                        <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-red)', marginTop: '0.25rem' }}>
+                          ⚠️ {imageUploadError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Group 4: Prompt */}
+                  <div className={styles.formGroupFull}>
+                    <span className={styles.formLabel}>Question Prompt</span>
+                    <textarea
+                      className={styles.textarea}
+                      rows={3}
+                      value={quizModal.question || ''}
+                      placeholder="e.g. Which revolutionary computing architecture is illustrated in this diagram?"
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, question: e.target.value }))
                       }
                     />
-                  ) : (
-                    <select
-                      className={styles.select}
-                      value={quizModal.correctAnswer || 'A'}
-                      onChange={(e) =>
-                        setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
-                      }
-                    >
-                      <option value="A">A</option>
-                      <option value="B">B</option>
-                      <option value="C">C</option>
-                      <option value="D">D</option>
-                    </select>
-                  )}
-                </div>
+                  </div>
 
-                <div className={styles.formGroup}>
-                  <span className={styles.formLabel}>Points</span>
-                  <input
-                    className={styles.input}
-                    type="number"
-                    value={quizModal.points ?? 15}
-                    onChange={(e) =>
-                      setQuizModal((p) => ({ ...p!, points: +e.target.value }))
-                    }
-                  />
+                  {/* Group 5: Options */}
+                  {quizModal.type !== 'REAL_OR_FAKE' && (
+                    <>
+                      <div className={styles.formGroup}>
+                        <span className={styles.formLabel}>Option A</span>
+                        <input
+                          className={styles.input}
+                          value={quizModal.optionA || ''}
+                          onChange={(e) =>
+                            setQuizModal((p) => ({ ...p!, optionA: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className={styles.formGroup}>
+                        <span className={styles.formLabel}>Option B</span>
+                        <input
+                          className={styles.input}
+                          value={quizModal.optionB || ''}
+                          onChange={(e) =>
+                            setQuizModal((p) => ({ ...p!, optionB: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className={styles.formGroup}>
+                        <span className={styles.formLabel}>Option C</span>
+                        <input
+                          className={styles.input}
+                          value={quizModal.optionC || ''}
+                          onChange={(e) =>
+                            setQuizModal((p) => ({ ...p!, optionC: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className={styles.formGroup}>
+                        <span className={styles.formLabel}>Option D</span>
+                        <input
+                          className={styles.input}
+                          value={quizModal.optionD || ''}
+                          onChange={(e) =>
+                            setQuizModal((p) => ({ ...p!, optionD: e.target.value }))
+                          }
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Group 6: Answer & Points */}
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Correct Answer</span>
+                    {quizModal.type === 'REAL_OR_FAKE' ? (
+                      <select
+                        className={styles.select}
+                        value={quizModal.correctAnswer || 'REAL'}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                        }
+                      >
+                        <option value="REAL">REAL</option>
+                        <option value="FAKE">FAKE</option>
+                      </select>
+                    ) : quizModal.type === 'SHUFFLE_ORDER' ? (
+                      <input
+                        className={styles.input}
+                        value={quizModal.correctAnswer || ''}
+                        placeholder='["1. Step", "2. Step"]'
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                        }
+                      />
+                    ) : (
+                      <select
+                        className={styles.select}
+                        value={quizModal.correctAnswer || 'A'}
+                        onChange={(e) =>
+                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                        }
+                      >
+                        <option value="A">A</option>
+                        <option value="B">B</option>
+                        <option value="C">C</option>
+                        <option value="D">D</option>
+                      </select>
+                    )}
+                  </div>
+
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Points</span>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      value={quizModal.points ?? 15}
+                      onChange={(e) =>
+                        setQuizModal((p) => ({ ...p!, points: +e.target.value }))
+                      }
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className={styles.modalFooter}>
-              <button
-                className={styles.btnSecondary}
-                onClick={() => setQuizModal(null)}
-              >
-                Cancel
-              </button>
-              <button className={styles.btnPrimary} onClick={saveQuizQuestion}>
-                Save Question
-              </button>
+              <div className={styles.modalFooter}>
+                <button
+                  className={styles.btnSecondary}
+                  onClick={() => {
+                    setQuizModal(null);
+                    setModalFormError('');
+                    setImageUploadError('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className={styles.btnPrimary}
+                  disabled={imageUploading}
+                  onClick={saveQuizQuestion}
+                >
+                  {imageUploading ? 'Uploading Image...' : 'Save Question'}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── DEBUG PROBLEM MODAL ──────────────────────────────────────────── */}
       {debugModal !== null && (

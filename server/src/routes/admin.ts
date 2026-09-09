@@ -21,11 +21,42 @@ import {
   endRound2,
   computeFinalRankings,
 } from '../services/eventService';
-import { emitEventStateChanged, emitThemeUpdated } from '../socket/socketManager';
+import { emitEventStateChanged } from '../socket/socketManager';
+import path from 'path';
+import fs from 'fs';
 import { Server } from 'socket.io';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+const questionsUploadDir = path.join(__dirname, '../../uploads/questions');
+if (!fs.existsSync(questionsUploadDir)) {
+  fs.mkdirSync(questionsUploadDir, { recursive: true });
+}
+
+const imageStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, questionsUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.png';
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `question-${uniqueSuffix}${ext}`);
+  },
+});
+
+const imageUpload = multer({
+  storage: imageStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error('INVALID_MIME_TYPE'));
+    }
+  },
+});
 
 function getIo(req: Request): Server {
   return req.app.get('io') as Server;
@@ -320,11 +351,13 @@ router.delete('/quiz-challenges/:id', requireAdmin, async (req: AuthRequest, res
 
 // ─── Quiz Questions CRUD ──────────────────────────────────────────────────────
 
+const VALID_CATEGORIES = ['AI', 'GADGETS', 'CYBERSECURITY', 'SPACE', 'GAMING', 'FOUNDERS'] as const;
+
 const quizSchema = z.object({
   eventId: z.string().min(1),
   challengeId: z.string().optional().nullable(),
   round: z.number().int().min(1).max(2).default(1),
-  category: z.string().default('TECH'),
+  category: z.enum(VALID_CATEGORIES).default('AI'),
   type: z.string().default('MCQ'),
   question: z.string().min(1),
   imageUrl: z.string().default(''),
@@ -353,12 +386,77 @@ router.get('/quiz-questions', requireAdmin, async (req: AuthRequest, res: Respon
   res.json({ questions });
 });
 
+router.post(
+  '/quiz-questions/upload-image',
+  requireAdmin,
+  (req: Request, res: Response): void => {
+    imageUpload.single('image')(req, res, (err: unknown) => {
+      if (err) {
+        if ((err as Error).message === 'INVALID_MIME_TYPE') {
+          res.status(400).json({ error: 'Invalid file format. Only JPG, PNG, and WEBP image files are allowed.' });
+          return;
+        }
+        res.status(400).json({ error: (err as Error).message || 'Image upload failed. Maximum size is 5MB.' });
+        return;
+      }
+      if (!req.file) {
+        res.status(400).json({ error: 'No image file uploaded.' });
+        return;
+      }
+      const imageUrl = `/uploads/questions/${req.file.filename}`;
+      res.json({ imageUrl, filename: req.file.filename });
+    });
+  }
+);
+
+router.post(
+  '/quiz-questions/:id/upload-image',
+  requireAdmin,
+  (req: Request, res: Response): void => {
+    imageUpload.single('image')(req, res, async (err: unknown) => {
+      if (err) {
+        if ((err as Error).message === 'INVALID_MIME_TYPE') {
+          res.status(400).json({ error: 'Invalid file format. Only JPG, PNG, and WEBP image files are allowed.' });
+          return;
+        }
+        res.status(400).json({ error: (err as Error).message || 'Image upload failed. Maximum size is 5MB.' });
+        return;
+      }
+      if (!req.file) {
+        res.status(400).json({ error: 'No image file uploaded.' });
+        return;
+      }
+      const id = String(req.params.id);
+      const imageUrl = `/uploads/questions/${req.file.filename}`;
+      try {
+        const question = await prisma.quizQuestion.update({
+          where: { id },
+          data: { imageUrl },
+        });
+        res.json({ imageUrl, question });
+      } catch {
+        res.status(404).json({ error: 'Question not found' });
+      }
+    });
+  }
+);
+
 router.post('/quiz-questions', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
   const parsed = quizSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0].message });
     return;
   }
+
+  // Validate that GUESS_THE_TECH questions require an imageUrl
+  if (parsed.data.challengeId) {
+    const challenge = await prisma.quizChallenge.findUnique({ where: { id: parsed.data.challengeId } });
+    if (challenge?.type === 'GUESS_THE_TECH' && (!parsed.data.imageUrl || !parsed.data.imageUrl.trim())) {
+      res.status(400).json({ error: 'Image is required for GUESS_THE_TECH challenge questions.' });
+      return;
+    }
+  }
+
   const question = await prisma.quizQuestion.create({ data: parsed.data });
   res.status(201).json({ question });
 });
@@ -369,6 +467,22 @@ router.patch('/quiz-questions/:id', requireAdmin, async (req: AuthRequest, res: 
     res.status(400).json({ error: parsed.error.errors[0].message });
     return;
   }
+
+  // Validate that GUESS_THE_TECH questions require an imageUrl
+  if (parsed.data.challengeId || parsed.data.imageUrl !== undefined) {
+    const existing = await prisma.quizQuestion.findUnique({ where: { id: String(req.params.id) } });
+    const targetChallengeId = parsed.data.challengeId ?? existing?.challengeId;
+    const targetImageUrl = parsed.data.imageUrl ?? existing?.imageUrl;
+
+    if (targetChallengeId) {
+      const challenge = await prisma.quizChallenge.findUnique({ where: { id: targetChallengeId } });
+      if (challenge?.type === 'GUESS_THE_TECH' && (!targetImageUrl || !targetImageUrl.trim())) {
+        res.status(400).json({ error: 'Image is required for GUESS_THE_TECH challenge questions.' });
+        return;
+      }
+    }
+  }
+
   const updated = await prisma.quizQuestion.update({
     where: { id: String(req.params.id) },
     data: parsed.data,
@@ -413,7 +527,7 @@ router.get('/quiz-questions/template', requireAdmin, (_req: Request, res: Respon
     ],
     [
       '2',
-      'FACT_CHECK',
+      'FOUNDERS',
       'REAL_OR_FAKE',
       'Apple released a clothing line in 1986 called The Apple Collection.',
       'REAL',
@@ -488,7 +602,8 @@ router.post(
       const r = row as Record<string, unknown>;
 
       const qRound = Number(r['round']) || Number(round) || 1;
-      const category = String(r['category'] || 'TECH').trim();
+      const rawCategory = String(r['category'] || 'AI').trim().toUpperCase();
+      const category = (VALID_CATEGORIES as readonly string[]).includes(rawCategory) ? rawCategory : 'AI';
       const type = String(r['type'] || 'MCQ').trim();
       const question = String(r['question'] || '').trim();
       const optionA = String(r['optionA'] || '').trim();
@@ -730,36 +845,6 @@ router.get('/results', requireAdmin, async (_req: AuthRequest, res: Response): P
   }
 
   res.json({ results });
-});
-
-// ─── Themes ───────────────────────────────────────────────────────────────────
-
-router.get('/themes', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
-  const themes = await prisma.themeSettings.findMany({ orderBy: { updatedAt: 'desc' } });
-  res.json({ themes });
-});
-
-router.post('/theme/activate', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
-  const { themeId } = req.body as { themeId: string };
-  if (!themeId) {
-    res.status(400).json({ error: 'themeId is required' });
-    return;
-  }
-
-  const theme = await prisma.themeSettings.findUnique({ where: { id: themeId } });
-  if (!theme) {
-    res.status(404).json({ error: 'Theme not found' });
-    return;
-  }
-
-  await prisma.themeSettings.updateMany({ data: { isActive: false } });
-  const activated = await prisma.themeSettings.update({
-    where: { id: themeId },
-    data: { isActive: true, version: { increment: 1 } },
-  });
-
-  emitThemeUpdated(getIo(req), activated);
-  res.json({ theme: activated });
 });
 
 export default router;

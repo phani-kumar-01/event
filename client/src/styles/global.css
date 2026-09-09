@@ -1,17 +1,42 @@
-/* ─── CSS Variables (theme) ─────────────────────────────────────────────── */
+/* ─── Hardcoded SASI Red & White Theme ───────────────────────────────────── */
 :root {
-  --color-primary: #8b0000;
-  --color-secondary: #650000;
-  --color-accent: #f5a623;
-  --color-background: #f7f7f7;
+  --color-primary: #e4002b;
+  --color-primary-hover: #c50025;
+  --color-primary-dark: #96001b;
+  --color-secondary: #0f172a;
+  --color-accent: #e4002b;
+  --color-background: #f8fafc;
   --color-surface: #ffffff;
-  --color-text: #222222;
+  --color-surface-alt: #f1f5f9;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-border: #e2e8f0;
 
-  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --admin-red: #e4002b;
+  --admin-red-hover: #c50025;
+  --admin-red-dark: #96001b;
+  --admin-red-tint: #fee2e2;
+  --admin-red-subtle: #fff5f5;
+  --admin-bg: #f8fafc;
+  --admin-surface: #ffffff;
+  --admin-surface-alt: #f1f5f9;
+  --admin-surface-hover: #f8fafc;
+  --admin-border: #e2e8f0;
+  --admin-border-dark: #cbd5e1;
+  --admin-border-focus: #e4002b;
+  --admin-text-main: #0f172a;
+  --admin-text-muted: #64748b;
+  --admin-text-light: #94a3b8;
+  --admin-green: #16a34a;
+  --admin-green-tint: #dcfce7;
+  --admin-yellow: #d97706;
+  --admin-yellow-tint: #fef3c7;
+
+  --font-sans: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   --radius: 6px;
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.12);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 /* ─── Reset ─────────────────────────────────────────────────────────────── */
@@ -70,6 +95,6 @@ a {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #ccc;
+  background: #cbd5e1;
   border-radius: 3px;
 }
