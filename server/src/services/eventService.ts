@@ -760,6 +760,7 @@ export async function getOrderedQuestionsForStudent(
       optionD: displayD,
       points: rawQ.points,
       order: rawQ.order,
+      correctSequence: options.includeAnswers ? rawQ.correctSequence : undefined,
       ...(options.includeAnswers && {
         correctAnswer: rawQ.correctAnswer,
         explanation: rawQ.explanation,
@@ -772,19 +773,22 @@ export async function getOrderedQuestionsForStudent(
 }
 
 /**
- * Validate a student answer taking option remapping into account.
+ * Validate a student answer taking option remapping and sequence ordering into account.
  */
 export async function validateStudentAnswer(
   userId: string,
-  question: { id: string; challengeId: string | null; type: string; correctAnswer: string; points: number },
+  question: { id: string; challengeId: string | null; type: string; correctAnswer: string; correctSequence?: string; points: number },
   selectedAnswer: string
 ): Promise<{ isCorrect: boolean; pointsAwarded: number }> {
   let isCorrect = false;
 
-  if (question.type === 'SHUFFLE_ORDER') {
+  if (question.type === 'SHUFFLE_ORDER' || question.type === 'TECH_SHUFFLE') {
     try {
       const studentArr = JSON.parse(selectedAnswer);
-      const correctArr = JSON.parse(question.correctAnswer);
+      const targetSeq = question.correctSequence && question.correctSequence !== '[]' 
+        ? question.correctSequence 
+        : question.correctAnswer;
+      const correctArr = JSON.parse(targetSeq);
       isCorrect = JSON.stringify(studentArr) === JSON.stringify(correctArr);
     } catch {
       isCorrect = selectedAnswer.trim() === question.correctAnswer.trim();

@@ -92,12 +92,14 @@ model QuizChallenge {
   description String   @default("")
   order       Int      @default(0)
   points      Int      @default(100)
-  timeLimit   Int      @default(0) // seconds (0 for default round timer)
-  config      String   @default("{}") // JSON: image, shuffle moves, shuffle items, etc.
-  isActive    Boolean  @default(true)
-  isLocked    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  timeLimit          Int      @default(0) // seconds (0 for default round timer)
+  timerMode          String   @default("GLOBAL_STAGE") // "GLOBAL_STAGE" | "PER_QUESTION"
+  timePerQuestionSec Int      @default(0) // seconds per question if timerMode == PER_QUESTION
+  config             String   @default("{}") // JSON: image, shuffle moves, shuffle items, etc.
+  isActive           Boolean  @default(true)
+  isLocked           Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   event             Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
   questions         QuizQuestion[]
@@ -107,24 +109,25 @@ model QuizChallenge {
 }
 
 model QuizQuestion {
-  id            String           @id @default(cuid())
-  eventId       String
-  challengeId   String?
-  round         Int              @default(1) // 1 or 2
-  category      String           @default("AI") // "AI" | "GADGETS" | "CYBERSECURITY" | "SPACE" | "GAMING" | "FOUNDERS"
-  type          String           @default("MCQ") // "MCQ" | "REAL_OR_FAKE" | "SHUFFLE_ORDER" | "GUESS_IMAGE"
-  question      String
-  imageUrl      String           @default("")
-  optionA       String           @default("")
-  optionB       String           @default("")
-  optionC       String           @default("")
-  optionD       String           @default("")
-  correctAnswer String           // "A" | "B" | "C" | "D" | "REAL" | "FAKE" | JSON array for shuffle
-  explanation   String           @default("")
-  points        Int              @default(10)
-  order         Int              @default(0)
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  eventId         String
+  challengeId     String?
+  round           Int              @default(1) // 1 or 2
+  category        String           @default("AI") // "AI" | "GADGETS" | "CYBERSECURITY" | "SPACE" | "GAMING" | "FOUNDERS" | "TECH_SHUFFLE" | "PUZZLE_GRID"
+  type            String           @default("MCQ") // "MCQ" | "REAL_OR_FAKE" | "SHUFFLE_ORDER" | "GUESS_IMAGE" | "TECH_SHUFFLE" | "PUZZLE_GRID"
+  question        String
+  imageUrl        String           @default("")
+  optionA         String           @default("")
+  optionB         String           @default("")
+  optionC         String           @default("")
+  optionD         String           @default("")
+  correctAnswer   String           // "A" | "B" | "C" | "D" | "REAL" | "FAKE" | JSON array for shuffle
+  correctSequence String           @default("[]") // JSON string of ordered step strings
+  explanation     String           @default("")
+  points          Int              @default(10)
+  order           Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   challenge QuizChallenge? @relation(fields: [challengeId], references: [id], onDelete: SetNull)
@@ -144,6 +147,7 @@ model PuzzleSubmission {
   timeTakenSeconds Int      @default(0)
   isSolved         Boolean  @default(false)
   initialState     String   @default("[]") // JSON
+  currentState     String   @default("[]") // JSON
   pointsAwarded    Int      @default(0)
   submittedAt      DateTime @default(now())
 

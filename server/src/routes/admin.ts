@@ -304,6 +304,8 @@ const challengeSchema = z.object({
   order: z.number().int().default(0),
   points: z.number().int().positive().default(100),
   timeLimit: z.number().int().nonnegative().default(0),
+  timerMode: z.string().default('GLOBAL_STAGE'),
+  timePerQuestionSec: z.number().int().nonnegative().default(0),
   config: z.string().default('{}'),
   isActive: z.boolean().default(true),
   isLocked: z.boolean().default(false),
@@ -351,7 +353,7 @@ router.delete('/quiz-challenges/:id', requireAdmin, async (req: AuthRequest, res
 
 // ─── Quiz Questions CRUD ──────────────────────────────────────────────────────
 
-const VALID_CATEGORIES = ['AI', 'GADGETS', 'CYBERSECURITY', 'SPACE', 'GAMING', 'FOUNDERS'] as const;
+const VALID_CATEGORIES = ['AI', 'GADGETS', 'CYBERSECURITY', 'SPACE', 'GAMING', 'FOUNDERS', 'TECH_SHUFFLE', 'PUZZLE_GRID'] as const;
 
 const quizSchema = z.object({
   eventId: z.string().min(1),
@@ -366,6 +368,7 @@ const quizSchema = z.object({
   optionC: z.string().default(''),
   optionD: z.string().default(''),
   correctAnswer: z.string().min(1),
+  correctSequence: z.string().default('[]'),
   explanation: z.string().default(''),
   points: z.number().int().positive().default(10),
   order: z.number().int().default(0),

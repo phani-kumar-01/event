@@ -11,9 +11,11 @@ interface Props {
     shuffleMoves?: number;
   };
   initialState?: number[] | string;
+  currentState?: number[] | string;
   alreadySolved?: boolean;
   savedMoves?: number;
-  onComplete?: (result: { moves: number; timeTakenSeconds: number; isSolved: boolean; initialState: string }) => void;
+  onComplete?: (result: { moves: number; timeTakenSeconds: number; isSolved: boolean; initialState: string; currentState: string }) => void;
+  onStateChange?: (board: number[], moves: number, timeTaken: number) => void;
   isReadOnly?: boolean;
 }
 
@@ -66,7 +68,6 @@ function generateSolvableBoard(movesCount = 28): { board: number[]; moves: numbe
 
   // Ensure it's not solved initially
   if (isBoardSolved(board)) {
-    // Make 2 random swaps to ensure it needs solving
     const neighbors = [emptyIdx > 2 ? emptyIdx - 3 : emptyIdx + 3];
     const chosen = neighbors[0];
     board[emptyIdx] = board[chosen];
@@ -88,7 +89,9 @@ export default function SlidingPuzzle({
   points,
   config,
   onComplete,
+  onStateChange,
   initialState,
+  currentState,
   alreadySolved = false,
   savedMoves = 0,
   isReadOnly = false,
@@ -101,18 +104,31 @@ export default function SlidingPuzzle({
   const [solved, setSolved] = useState(alreadySolved);
   const [submitted, setSubmitted] = useState(alreadySolved);
 
-  // Initialize board from server-persisted initialState or fallback
+  // Initialize board from server-persisted initialState/currentState or fallback
   useEffect(() => {
     let startingBoard: number[] | null = null;
+    let currentActiveBoard: number[] | null = null;
+
     if (initialState) {
       if (Array.isArray(initialState) && initialState.length === 9) {
         startingBoard = initialState;
       } else if (typeof initialState === 'string') {
         try {
           const parsed = JSON.parse(initialState);
-          if (Array.isArray(parsed) && parsed.length === 9) {
-            startingBoard = parsed;
-          }
+          if (Array.isArray(parsed) && parsed.length === 9) startingBoard = parsed;
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (currentState) {
+      if (Array.isArray(currentState) && currentState.length === 9) {
+        currentActiveBoard = currentState;
+      } else if (typeof currentState === 'string') {
+        try {
+          const parsed = JSON.parse(currentState);
+          if (Array.isArray(parsed) && parsed.length === 9) currentActiveBoard = parsed;
         } catch {
           // ignore
         }
@@ -126,13 +142,13 @@ export default function SlidingPuzzle({
     }
 
     setInitialBoard(startingBoard);
-    setBoard(startingBoard);
+    setBoard(currentActiveBoard || startingBoard);
     setMoves(savedMoves);
     setStartTime(Date.now());
     setElapsedSeconds(0);
     setSolved(alreadySolved);
     setSubmitted(alreadySolved);
-  }, [challengeId, config?.shuffleMoves, initialState, alreadySolved, savedMoves]);
+  }, [challengeId, config?.shuffleMoves, initialState, currentState, alreadySolved, savedMoves]);
 
   // Live timer
   useEffect(() => {
@@ -168,29 +184,34 @@ export default function SlidingPuzzle({
       setBoard(newBoard);
       setMoves(nextMoves);
 
+      const timeTaken = Math.max(1, Math.floor((Date.now() - startTime) / 1000));
+      onStateChange?.(newBoard, nextMoves, timeTaken);
+
       if (isBoardSolved(newBoard)) {
         setSolved(true);
-        const timeTaken = Math.max(1, Math.floor((Date.now() - startTime) / 1000));
         onComplete?.({
           moves: nextMoves,
           timeTakenSeconds: timeTaken,
           isSolved: true,
           initialState: JSON.stringify(initialBoard),
+          currentState: JSON.stringify(newBoard),
         });
       }
     },
-    [board, moves, solved, submitted, isReadOnly, startTime, initialBoard, onComplete]
+    [board, moves, solved, submitted, isReadOnly, startTime, initialBoard, onComplete, onStateChange]
   );
 
   function handleReset() {
     if (solved || submitted || isReadOnly) return;
     setBoard([...initialBoard]);
     setMoves(0);
+    onStateChange?.([...initialBoard], 0, 0);
   }
 
   const minutes = Math.floor(elapsedSeconds / 60);
   const seconds = elapsedSeconds % 60;
   const timeFormatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const hasCustomImage = !!config?.image;
 
   return (
     <div className={styles.container}>
@@ -242,18 +263,32 @@ export default function SlidingPuzzle({
             const data = TILE_DATA[tile] || { label: `Tile ${tile}`, icon: '⚡', color: '#8B0000' };
             const isCorrectPosition = tile === idx + 1;
 
+            // Image slice coordinates for 3x3 grid
+            const origTileIndex = tile - 1; // 0..7
+            const origRow = Math.floor(origTileIndex / 3);
+            const origCol = origTileIndex % 3;
+            const imageStyle = hasCustomImage
+              ? {
+                  backgroundImage: `url(${config!.image})`,
+                  backgroundSize: '300% 300%',
+                  backgroundPosition: `${origCol * 50}% ${origRow * 50}%`,
+                  backgroundRepeat: 'no-repeat',
+                }
+              : {};
+
             return (
               <button
                 key={tile}
                 type="button"
-                className={`${styles.tile} ${isCorrectPosition ? styles.tileCorrect : ''}`}
+                className={`${styles.tile} ${isCorrectPosition ? styles.tileCorrect : ''} ${hasCustomImage ? styles.tileImage : ''}`}
+                style={imageStyle}
                 onClick={() => handleTileClick(idx)}
                 disabled={solved || isReadOnly}
                 aria-label={`Tile ${tile}: ${data.label}`}
               >
                 <span className={styles.tileNumber}>{tile}</span>
-                <span className={styles.tileIcon}>{data.icon}</span>
-                <span className={styles.tileLabel}>{data.label}</span>
+                {!hasCustomImage && <span className={styles.tileIcon}>{data.icon}</span>}
+                {!hasCustomImage && <span className={styles.tileLabel}>{data.label}</span>}
                 {isCorrectPosition && <span className={styles.checkMark}>✓</span>}
               </button>
             );

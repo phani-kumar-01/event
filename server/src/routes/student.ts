@@ -289,6 +289,8 @@ router.get(
         order: c.order,
         points: c.points,
         timeLimit: c.timeLimit,
+        timerMode: c.timerMode || 'GLOBAL_STAGE',
+        timePerQuestionSec: c.timePerQuestionSec || 0,
         config: c.config ? JSON.parse(c.config) : {},
         isActive: c.isActive,
         isLocked: c.isLocked,
@@ -442,6 +444,7 @@ router.get(
             timeTakenSeconds: 0,
             isSolved: false,
             initialState: JSON.stringify(initialBoard),
+            currentState: JSON.stringify(initialBoard),
             pointsAwarded: 0,
           },
         });
@@ -452,6 +455,47 @@ router.get(
   }
 );
 
+// ─── POST /api/events/:id/puzzle-state ───────────────────────────────────────
+const puzzleStateSchema = z.object({
+  challengeId: z.string().min(1),
+  moves: z.number().int().nonnegative(),
+  timeTakenSeconds: z.number().int().nonnegative(),
+  currentState: z.string().default('[]'),
+});
+
+router.post(
+  '/events/:id/puzzle-state',
+  requireAuth,
+  async (req: AuthRequest, res: Response): Promise<void> => {
+    const parsed = puzzleStateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.errors[0].message });
+      return;
+    }
+
+    const { challengeId, moves, timeTakenSeconds, currentState } = parsed.data;
+    const eventId = String(req.params.id);
+    const userId = req.user!.userId;
+
+    const puzzle = await prisma.puzzleSubmission.findUnique({
+      where: { userId_challengeId: { userId, challengeId } },
+    });
+
+    if (puzzle && !puzzle.isSolved) {
+      await prisma.puzzleSubmission.update({
+        where: { id: puzzle.id },
+        data: {
+          moves,
+          timeTakenSeconds,
+          currentState,
+        },
+      });
+    }
+
+    res.json({ success: true });
+  }
+);
+
 // ─── POST /api/events/:id/puzzle-submit ──────────────────────────────────────
 const puzzleSubmitSchema = z.object({
   challengeId: z.string().min(1),
@@ -459,6 +503,7 @@ const puzzleSubmitSchema = z.object({
   timeTakenSeconds: z.number().int().nonnegative(),
   isSolved: z.boolean(),
   initialState: z.string().default('[]'),
+  currentState: z.string().default('[]'),
 });
 
 router.post(
@@ -471,7 +516,7 @@ router.post(
       return;
     }
 
-    const { challengeId, moves, timeTakenSeconds, isSolved, initialState } = parsed.data;
+    const { challengeId, moves, timeTakenSeconds, isSolved, initialState, currentState } = parsed.data;
     const eventId = String(req.params.id);
     const userId = req.user!.userId;
 
@@ -525,12 +570,14 @@ router.post(
         timeTakenSeconds,
         isSolved,
         initialState,
+        currentState: currentState || initialState,
         pointsAwarded,
       },
       update: {
         moves,
         timeTakenSeconds,
         isSolved,
+        currentState: currentState || initialState,
         pointsAwarded,
       },
     });

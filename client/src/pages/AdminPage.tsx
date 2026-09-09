@@ -45,6 +45,10 @@ interface QuizChallenge {
   round: number;
   type: string;
   points: number;
+  timeLimit?: number;
+  timerMode?: string;
+  timePerQuestionSec?: number;
+  config?: string;
   isActive: boolean;
   orderIndex?: number;
 }
@@ -62,6 +66,7 @@ interface QuizQuestion {
   optionC?: string;
   optionD?: string;
   correctAnswer: string;
+  correctSequence?: string;
   points: number;
   explanation?: string;
 }
@@ -550,11 +555,27 @@ export default function AdminPage() {
       return;
     }
 
+    const isShuffle = quizModal.type === 'SHUFFLE_ORDER' || quizModal.type === 'TECH_SHUFFLE';
+    const payload: Partial<QuizQuestion> = { ...quizModal };
+
+    if (isShuffle) {
+      let seqArray: string[] = [quizModal.optionA, quizModal.optionB, quizModal.optionC, quizModal.optionD].filter(Boolean) as string[];
+      if (quizModal.correctAnswer && quizModal.correctAnswer.startsWith('[')) {
+        try {
+          seqArray = JSON.parse(quizModal.correctAnswer);
+        } catch {
+          // ignore
+        }
+      }
+      payload.correctAnswer = JSON.stringify(seqArray);
+      payload.correctSequence = JSON.stringify(seqArray);
+    }
+
     try {
       if (quizModal.id) {
-        await api.patch(`/admin/quiz-questions/${quizModal.id}`, quizModal);
+        await api.patch(`/admin/quiz-questions/${quizModal.id}`, payload);
       } else {
-        await api.post('/admin/quiz-questions', quizModal);
+        await api.post('/admin/quiz-questions', payload);
       }
       setQuizModal(null);
       setModalFormError('');
@@ -1813,6 +1834,46 @@ export default function AdminPage() {
                   />
                 </div>
 
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Stage Time Limit (Sec, 0 = default)</span>
+                  <input
+                    className={styles.input}
+                    type="number"
+                    value={challengeModal.timeLimit ?? 0}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, timeLimit: +e.target.value }))
+                    }
+                  />
+                </div>
+
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Timer Mode</span>
+                  <select
+                    className={styles.select}
+                    value={challengeModal.timerMode || 'GLOBAL_STAGE'}
+                    onChange={(e) =>
+                      setChallengeModal((p) => ({ ...p!, timerMode: e.target.value }))
+                    }
+                  >
+                    <option value="GLOBAL_STAGE">Global Stage Countdown</option>
+                    <option value="PER_QUESTION">Per-Question Fixed Timer</option>
+                  </select>
+                </div>
+
+                {challengeModal.timerMode === 'PER_QUESTION' && (
+                  <div className={styles.formGroup}>
+                    <span className={styles.formLabel}>Sec Per Question</span>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      value={challengeModal.timePerQuestionSec ?? 30}
+                      onChange={(e) =>
+                        setChallengeModal((p) => ({ ...p!, timePerQuestionSec: +e.target.value }))
+                      }
+                    />
+                  </div>
+                )}
+
                 <div className={styles.formGroupFull}>
                   <span className={styles.formLabel}>Subtitle / Description</span>
                   <input
@@ -1827,6 +1888,58 @@ export default function AdminPage() {
                     }
                   />
                 </div>
+
+                {/* Specific Config for PUZZLE_GRID */}
+                {challengeModal.type === 'PUZZLE_GRID' && (() => {
+                  let pzConfig: { image?: string; shuffleMoves?: number } = {};
+                  try {
+                    pzConfig = typeof challengeModal.config === 'string' ? JSON.parse(challengeModal.config || '{}') : challengeModal.config || {};
+                  } catch {
+                    pzConfig = {};
+                  }
+
+                  return (
+                    <>
+                      <div className={styles.formGroupFull}>
+                        <span className={styles.formLabel}>Puzzle Image Slice URL (Optional for 3x3 photo tile split)</span>
+                        <input
+                          className={styles.input}
+                          value={pzConfig.image || ''}
+                          placeholder="e.g. /branding/sasi-logo.png or https://..."
+                          onChange={(e) => {
+                            const updated = { ...pzConfig, image: e.target.value };
+                            setChallengeModal((p) => ({ ...p!, config: JSON.stringify(updated) }));
+                          }}
+                        />
+                        {pzConfig.image && (
+                          <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                            <img
+                              src={pzConfig.image}
+                              alt="Puzzle Preview"
+                              style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                            />
+                            <span style={{ fontSize: 'var(--font-size-micro)', color: '#64748b' }}>
+                              Tile matrix will dynamically slice this image into a 3x3 interactive board.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className={styles.formGroup}>
+                        <span className={styles.formLabel}>Scramble Swap Count</span>
+                        <input
+                          className={styles.input}
+                          type="number"
+                          value={pzConfig.shuffleMoves ?? 28}
+                          onChange={(e) => {
+                            const updated = { ...pzConfig, shuffleMoves: +e.target.value || 28 };
+                            setChallengeModal((p) => ({ ...p!, config: JSON.stringify(updated) }));
+                          }}
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
             <div className={styles.modalFooter}>
@@ -1930,6 +2043,7 @@ export default function AdminPage() {
                       <option value="MCQ">Multiple Choice (MCQ)</option>
                       <option value="REAL_OR_FAKE">Real or Fake</option>
                       <option value="SHUFFLE_ORDER">Tech Shuffle Sequence</option>
+                      <option value="TECH_SHUFFLE">Tech Shuffle Workflow</option>
                     </select>
                   </div>
 
@@ -1948,6 +2062,8 @@ export default function AdminPage() {
                       <option value="SPACE">SPACE</option>
                       <option value="GAMING">GAMING</option>
                       <option value="FOUNDERS">FOUNDERS</option>
+                      <option value="TECH_SHUFFLE">TECH SHUFFLE</option>
+                      <option value="PUZZLE_GRID">PUZZLE GRID</option>
                     </select>
                   </div>
 
@@ -2097,15 +2213,28 @@ export default function AdminPage() {
                         <option value="REAL">REAL</option>
                         <option value="FAKE">FAKE</option>
                       </select>
-                    ) : quizModal.type === 'SHUFFLE_ORDER' ? (
-                      <input
-                        className={styles.input}
-                        value={quizModal.correctAnswer || ''}
-                        placeholder='["1. Step", "2. Step"]'
-                        onChange={(e) =>
-                          setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
-                        }
-                      />
+                    ) : quizModal.type === 'SHUFFLE_ORDER' || quizModal.type === 'TECH_SHUFFLE' ? (
+                      <div>
+                        <input
+                          className={styles.input}
+                          value={quizModal.correctAnswer || ''}
+                          placeholder='["1. Step", "2. Step", "3. Step", "4. Step"]'
+                          onChange={(e) =>
+                            setQuizModal((p) => ({ ...p!, correctAnswer: e.target.value }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          className={styles.btnSecondary}
+                          style={{ marginTop: '0.35rem', padding: '0.2rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
+                          onClick={() => {
+                            const steps = [quizModal.optionA, quizModal.optionB, quizModal.optionC, quizModal.optionD].filter(Boolean);
+                            setQuizModal((p) => ({ ...p!, correctAnswer: JSON.stringify(steps) }));
+                          }}
+                        >
+                          ⚡ Auto-fill Sequence from Options A–D
+                        </button>
+                      </div>
                     ) : (
                       <select
                         className={styles.select}

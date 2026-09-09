@@ -104,7 +104,7 @@ export default function QuizPage() {
   const [shuffleOrder, setShuffleOrder] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [puzzleCompleted, setPuzzleCompleted] = useState(false);
-  const [puzzleData, setPuzzleData] = useState<{ isSolved: boolean; initialState?: string; moves?: number } | null>(null);
+  const [puzzleData, setPuzzleData] = useState<{ isSolved: boolean; initialState?: string; currentState?: string; moves?: number } | null>(null);
 
   const isEventRunning = event?.status === 'RUNNING';
   const { formatted: timeFormatted, remaining } = useTimer(isEventRunning ? event?.endTime : null);
@@ -243,7 +243,7 @@ export default function QuizPage() {
       });
       setAnswers(aMap);
 
-      const pzRes = await api.get<{ puzzle: { isSolved: boolean; initialState?: string; moves?: number } | null }>(
+      const pzRes = await api.get<{ puzzle: { isSolved: boolean; initialState?: string; currentState?: string; moves?: number } | null }>(
         `/events/${event.id}/my-puzzle${activeChallengeId ? `?challengeId=${activeChallengeId}` : ''}`
       );
       setPuzzleData(pzRes.data.puzzle);
@@ -298,9 +298,11 @@ export default function QuizPage() {
     }
 
     const prevAnswer = answers[currentQuestion.id];
+    const isShuffle = currentQuestion.type === 'SHUFFLE_ORDER' || currentQuestion.type === 'TECH_SHUFFLE';
+
     if (prevAnswer) {
       setSelectedOption(prevAnswer.selectedAnswer);
-      if (currentQuestion.type === 'SHUFFLE_ORDER') {
+      if (isShuffle) {
         try {
           setShuffleOrder(JSON.parse(prevAnswer.selectedAnswer));
         } catch {
@@ -314,7 +316,7 @@ export default function QuizPage() {
       }
     } else {
       setSelectedOption('');
-      if (currentQuestion.type === 'SHUFFLE_ORDER') {
+      if (isShuffle) {
         setShuffleOrder([
           currentQuestion.optionA,
           currentQuestion.optionB,
@@ -325,42 +327,73 @@ export default function QuizPage() {
     }
   }, [currentQuestion, answers]);
 
-  // ── 5. Submit Question Answer ────────────────────────────────────────────
-  async function handleSubmitAnswer(choiceOverride?: string) {
-    if (!event || !currentQuestion || !isEventRunning) return;
+  // ── 5. Answer Submission ─────────────────────────────────────────────────
+  async function handleSubmitAnswer(answerValue?: string) {
+    if (!event || !currentQuestion || submitting) return;
 
-    let answerToSubmit = choiceOverride || selectedOption;
-    if (currentQuestion.type === 'SHUFFLE_ORDER') {
-      answerToSubmit = JSON.stringify(shuffleOrder);
-    }
+    const isShuffle = currentQuestion.type === 'SHUFFLE_ORDER' || currentQuestion.type === 'TECH_SHUFFLE';
+    const finalAnswer = isShuffle
+      ? JSON.stringify(shuffleOrder)
+      : answerValue || selectedOption;
 
-    if (!answerToSubmit) return;
+    if (!finalAnswer) return;
 
     setSubmitting(true);
     try {
       const res = await api.post<{ answer: AnswerRecord }>(`/events/${event.id}/answers`, {
         questionId: currentQuestion.id,
-        selectedAnswer: answerToSubmit,
+        selectedAnswer: finalAnswer,
       });
 
-      setAnswers((prev) => ({ ...prev, [currentQuestion.id]: res.data.answer }));
-      loadChallengesAndAnswers();
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { error?: string } } })?.response?.data?.error ||
-        'Failed to submit answer';
-      alert(msg);
+      setAnswers((prev) => ({
+        ...prev,
+        [currentQuestion.id]: res.data.answer,
+      }));
+
+      // Update challenge progress locally
+      setChallenges((prev) =>
+        prev.map((c) => {
+          if (c.id === currentChallenge?.id) {
+            const nextAnswered = (c.progress?.answered || 0) + 1;
+            return {
+              ...c,
+              progress: {
+                answered: nextAnswered,
+                isCompleted: nextAnswered >= (c.questionCount || 1),
+              },
+            };
+          }
+          return c;
+        })
+      );
+    } catch {
+      // Ignore
     } finally {
       setSubmitting(false);
     }
   }
 
-  // ── 6. Handle Puzzle Complete ────────────────────────────────────────────
+  // ── 6. Puzzle Submission & State Sync ────────────────────────────────────
+  async function handlePuzzleStateChange(board: number[], moves: number, timeTakenSeconds: number) {
+    if (!event || !currentChallenge) return;
+    try {
+      await api.post(`/events/${event.id}/puzzle-state`, {
+        challengeId: currentChallenge.id,
+        moves,
+        timeTakenSeconds,
+        currentState: JSON.stringify(board),
+      });
+    } catch {
+      // Ignore
+    }
+  }
+
   async function handlePuzzleComplete(result: {
     moves: number;
     timeTakenSeconds: number;
     isSolved: boolean;
     initialState: string;
+    currentState?: string;
   }) {
     if (!event || !currentChallenge) return;
     try {
@@ -370,6 +403,7 @@ export default function QuizPage() {
         timeTakenSeconds: result.timeTakenSeconds,
         isSolved: result.isSolved,
         initialState: result.initialState,
+        currentState: result.currentState || result.initialState,
       });
       setPuzzleCompleted(true);
       loadChallengesAndAnswers();
@@ -599,8 +633,10 @@ export default function QuizPage() {
                 timeLimit={currentChallenge.timeLimit}
                 config={currentChallenge.config as { title?: string; image?: string; shuffleMoves?: number }}
                 initialState={puzzleData?.initialState}
+                currentState={puzzleData?.currentState}
                 alreadySolved={!!puzzleData?.isSolved}
                 savedMoves={puzzleData?.moves || 0}
+                onStateChange={handlePuzzleStateChange}
                 onComplete={handlePuzzleComplete}
                 isReadOnly={!isEventRunning}
               />
@@ -643,7 +679,7 @@ export default function QuizPage() {
               <h2 className={styles.questionPrompt}>{currentQuestion.question}</h2>
 
               {/* Input Type Variants */}
-              {currentQuestion.type === 'SHUFFLE_ORDER' ? (
+              {currentQuestion.type === 'SHUFFLE_ORDER' || currentQuestion.type === 'TECH_SHUFFLE' ? (
                 /* Tech Shuffle Sequence Sorter */
                 <TechShuffle
                   items={[
