@@ -62,19 +62,21 @@ model Event {
 }
 
 model DebuggingProblem {
-  id             String   @id @default(cuid())
-  eventId        String
-  title          String
-  description    String
-  buggyCode      String
-  expectedOutput String
+  id              String   @id @default(cuid())
+  eventId         String
+  title           String
+  description     String
+  buggyCode       String
+  expectedOutput  String
   // JSON: [{ input: string, expectedOutput: string }]
-  testCases      String   @default("[]")
-  points         Int      @default(100)
-  timeLimit      Int      @default(5) // seconds per test case
-  order          Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  sampleTestCases String   @default("[]")
+  hiddenTestCases String   @default("[]")
+  testCases       String   @default("[]")
+  points          Int      @default(100)
+  timeLimit       Int      @default(5) // seconds per test case
+  order           Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   submissions Submission[]

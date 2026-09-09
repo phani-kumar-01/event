@@ -21,6 +21,11 @@ interface Event {
   version: number;
 }
 
+interface TestCaseItem {
+  input: string;
+  expectedOutput: string;
+}
+
 interface Problem {
   id: string;
   title: string;
@@ -28,6 +33,7 @@ interface Problem {
   buggyCode: string;
   expectedOutput: string;
   sampleInput?: string;
+  sampleTestCases?: TestCaseItem[];
   points: number;
   timeLimit: number;
   order: number;
@@ -41,6 +47,17 @@ interface Submission {
   submittedAt: string;
 }
 
+interface TestCaseResult {
+  name: string;
+  type: 'SAMPLE' | 'HIDDEN';
+  status: 'PASSED' | 'FAILED' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR';
+  timeMs: number;
+  input?: string;
+  expectedOutput?: string;
+  actualOutput?: string;
+  error?: string;
+}
+
 interface SubmissionResult {
   result: 'ACCEPTED' | 'WRONG_ANSWER' | 'COMPILE_ERROR' | 'TIME_LIMIT_EXCEEDED' | 'RUNTIME_ERROR';
   compileOutput?: string;
@@ -48,16 +65,20 @@ interface SubmissionResult {
   pointsAwarded: number;
   passedCases: number;
   totalCases: number;
+  testCases?: TestCaseResult[];
+  nextProblemId?: string;
 }
 
 interface RunResult {
   success: boolean;
   output: string;
-  error: string;
+  error?: string;
+  compileOutput?: string;
+  testCases?: TestCaseResult[];
 }
 
 export default function DebuggingPage() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const connectionStatus = useConnectionStatus();
 
@@ -71,6 +92,7 @@ export default function DebuggingPage() {
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [activeConsoleTab, setActiveConsoleTab] = useState<'TESTS' | 'TERMINAL'>('TESTS');
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null);
 
@@ -147,7 +169,7 @@ export default function DebuggingPage() {
     loadEventAndProblems();
   }, [loadEventAndProblems]);
 
-  // ── Socket.IO: event state changes ───────────────────────────────────────
+  // ── Socket.IO: event state changes & problem solved notifications ──────────
   useEffect(() => {
     const socket = getSocket();
 
@@ -180,6 +202,18 @@ export default function DebuggingPage() {
       }
     }
 
+    function handleProblemSolved(data: {
+      userId: string;
+      eventId: string;
+      problemId: string;
+      nextProblemId?: string;
+      pointsAwarded: number;
+    }) {
+      if (data.userId === user?.id) {
+        setSolvedProblemIds((prev) => new Set([...prev, data.problemId]));
+      }
+    }
+
     async function handleReconnect() {
       if (!event) return;
       await loadEventAndProblems();
@@ -187,13 +221,15 @@ export default function DebuggingPage() {
     }
 
     socket.on('event.state_changed', handleStateChange);
+    socket.on('debugging:problem_solved', handleProblemSolved);
     socket.on('connect', handleReconnect);
 
     return () => {
       socket.off('event.state_changed', handleStateChange);
+      socket.off('debugging:problem_solved', handleProblemSolved);
       socket.off('connect', handleReconnect);
     };
-  }, [event, eventVersion, loadEventAndProblems, navigate]);
+  }, [event, eventVersion, loadEventAndProblems, navigate, user?.id]);
 
   // ── Problem status and progression rules ──────────────────────────────────
   function isProblemLocked(index: number): boolean {
@@ -220,6 +256,7 @@ export default function DebuggingPage() {
     setSelectedIndex(index);
     setRunResult(null);
     setSubmitResult(null);
+    setActiveConsoleTab('TESTS');
   }
 
   const currentProblem = problems[selectedIndex];
@@ -233,14 +270,17 @@ export default function DebuggingPage() {
     }));
   }
 
-  // ── Run Sample (Local Output Testing) ────────────────────────────────────
+  // ── Run Sample (Local Test Case Evaluation) ──────────────────────────────
   async function handleRunSample() {
     if (!event || event.status !== 'RUNNING' || !currentProblem) return;
     setRunning(true);
     setRunResult(null);
+    setActiveConsoleTab('TESTS');
+
     try {
       const res = await api.post<RunResult>(`/events/${event.id}/run-code`, {
         code: currentCode,
+        problemId: currentProblem.id,
         input: currentProblem.sampleInput || '',
       });
       setRunResult(res.data);
@@ -257,12 +297,13 @@ export default function DebuggingPage() {
     }
   }
 
-  // ── Submit Solution (Hidden Server Test Cases) ───────────────────────────
+  // ── Submit Solution (Both Sample + Hidden Test Cases) ────────────────────
   async function confirmAndSubmit() {
     if (!event || event.status !== 'RUNNING' || !currentProblem || submitting) return;
     setSubmitting(true);
     setSubmitResult(null);
     setConfirmModalOpen(false);
+    setActiveConsoleTab('TESTS');
 
     try {
       const res = await api.post<{ submission: SubmissionResult }>(
@@ -311,7 +352,7 @@ export default function DebuggingPage() {
       case 'TIME_LIMIT_EXCEEDED':
         return (
           <span className={`${styles.verdictBadge} ${styles.verdictTimeLimit}`}>
-            ⏱ TIME LIMIT EXCEEDED (5s Limit)
+            ⏱ TIME LIMIT EXCEEDED
           </span>
         );
       case 'RUNTIME_ERROR':
@@ -328,6 +369,9 @@ export default function DebuggingPage() {
   const isCurrentSolved = currentProblem ? solvedProblemIds.has(currentProblem.id) : false;
   const hasNextProblem = selectedIndex + 1 < problems.length;
   const isNextUnlocked = hasNextProblem && !isProblemLocked(selectedIndex + 1);
+
+  // Active test cases to display
+  const activeTestCases: TestCaseResult[] = submitResult?.testCases || runResult?.testCases || [];
 
   return (
     <div className={styles.page}>
@@ -512,56 +556,141 @@ export default function DebuggingPage() {
                 </div>
               </div>
 
-              {/* ── Compact Console / Terminal Output Panel ───────────────── */}
+              {/* ── Compact Console / Test Case Runner Panel ──────────────── */}
               <div className={styles.consolePanel}>
                 <div className={styles.consoleHeader}>
                   <div className={styles.consoleHeaderLeft}>
-                    <span className={styles.consoleTitle}>CONSOLE OUTPUT &amp; VERDICT</span>
+                    <div className={styles.consoleTabGroup}>
+                      <button
+                        className={`${styles.consoleTabBtn} ${activeConsoleTab === 'TESTS' ? styles.consoleTabBtnActive : ''}`}
+                        onClick={() => setActiveConsoleTab('TESTS')}
+                      >
+                        🧪 Test Cases {activeTestCases.length > 0 && `(${activeTestCases.length})`}
+                      </button>
+                      <button
+                        className={`${styles.consoleTabBtn} ${activeConsoleTab === 'TERMINAL' ? styles.consoleTabBtnActive : ''}`}
+                        onClick={() => setActiveConsoleTab('TERMINAL')}
+                      >
+                        📟 Terminal Output
+                      </button>
+                    </div>
+
                     {submitResult && (
                       <span className={styles.caseSummaryText}>
-                        ({submitResult.passedCases}/{submitResult.totalCases} hidden tests passed)
+                        ({submitResult.passedCases}/{submitResult.totalCases} passed)
                       </span>
                     )}
                   </div>
+
                   <div className={styles.consoleHeaderRight}>
                     {submitResult && renderVerdictBadge(submitResult.result)}
                   </div>
                 </div>
 
                 <div className={styles.consoleContent}>
-                  {/* Run Sample Output */}
-                  {runResult && (
-                    <div className={styles.outputSection}>
-                      <div className={styles.outputSectionHeader}>
-                        {runResult.success ? '✓ Preview stdout:' : '✗ Execution stderr:'}
-                      </div>
-                      <pre className={styles.consoleTerminal}>
-                        {runResult.output || runResult.error || '(no stdout output)'}
-                      </pre>
-                    </div>
-                  )}
+                  {/* ── Tab 1: Test Cases Runner UI ── */}
+                  {activeConsoleTab === 'TESTS' && (
+                    <>
+                      {activeTestCases.length > 0 ? (
+                        <div className={styles.testCasesList}>
+                          {activeTestCases.map((tc, idx) => {
+                            const isPassed = tc.status === 'PASSED';
+                            const isHidden = tc.type === 'HIDDEN';
 
-                  {/* Submit Code Output */}
-                  {submitResult && (
-                    <div className={styles.outputSection}>
-                      <div className={styles.outputSectionHeader}>
-                        {submitResult.result === 'ACCEPTED'
-                          ? `✓ Evaluation Passed (${submitResult.passedCases}/${submitResult.totalCases} test cases passed)`
-                          : `✗ Evaluation Failed (${submitResult.passedCases}/${submitResult.totalCases} test cases passed):`}
-                      </div>
-                      {(submitResult.compileOutput || submitResult.runOutput) ? (
-                        <pre className={styles.consoleTerminal}>
-                          {submitResult.compileOutput || submitResult.runOutput}
-                        </pre>
+                            return (
+                              <div
+                                key={idx}
+                                className={`${styles.testCaseCard} ${isPassed ? styles.testCaseCardPassed : styles.testCaseCardFailed}`}
+                              >
+                                <div className={styles.testCaseCardTop}>
+                                  <div className={styles.testCaseMeta}>
+                                    <span className={isHidden ? styles.tagHidden : styles.tagSample}>
+                                      {isHidden ? 'HIDDEN' : 'SAMPLE'}
+                                    </span>
+                                    <span className={styles.testCaseName}>{tc.name}</span>
+                                  </div>
+
+                                  <div className={styles.testCaseStatus}>
+                                    <span
+                                      className={`${styles.caseStatusBadge} ${
+                                        isPassed ? styles.caseStatusPassed : styles.caseStatusFailed
+                                      }`}
+                                    >
+                                      {isPassed ? `✓ PASSED [${tc.timeMs}ms]` : `✗ ${tc.status} [${tc.timeMs}ms]`}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Sample Test Case Details */}
+                                {!isHidden && (tc.actualOutput !== undefined || tc.expectedOutput !== undefined) && (
+                                  <div className={styles.testCaseBody}>
+                                    {tc.input && (
+                                      <div className={styles.caseDataRow}>
+                                        <span className={styles.caseDataLabel}>Input:</span>
+                                        <code className={styles.caseDataCode}>{tc.input}</code>
+                                      </div>
+                                    )}
+                                    <div className={styles.caseDataRow}>
+                                      <span className={styles.caseDataLabel}>Expected:</span>
+                                      <code className={styles.caseDataCode}>{tc.expectedOutput}</code>
+                                    </div>
+                                    <div className={styles.caseDataRow}>
+                                      <span className={styles.caseDataLabel}>Actual:</span>
+                                      <code className={`${styles.caseDataCode} ${isPassed ? styles.codeMatch : styles.codeMismatch}`}>
+                                        {tc.actualOutput || '(no stdout output)'}
+                                      </code>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Hidden Test Case Notice */}
+                                {isHidden && (
+                                  <div className={styles.hiddenCaseNotice}>
+                                    🔒 Server validation test case executed securely. Inputs and outputs are hidden.
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       ) : (
-                        <pre className={styles.consoleTerminal}>All hidden test cases passed successfully!</pre>
+                        <div className={styles.consolePlaceholder}>
+                          Click <strong>▶ Run Sample</strong> to evaluate sample test cases, or click <strong>✓ Submit Solution</strong> to run all sample and hidden test cases.
+                        </div>
                       )}
-                    </div>
+                    </>
                   )}
 
-                  {!runResult && !submitResult && (
-                    <div className={styles.consolePlaceholder}>
-                      Click <strong>▶ Run Sample</strong> to verify local stdout against Expected Output, or click <strong>✓ Submit Solution</strong> to evaluate all hidden test cases.
+                  {/* ── Tab 2: Terminal Output UI ── */}
+                  {activeConsoleTab === 'TERMINAL' && (
+                    <div className={styles.terminalContainer}>
+                      {runResult && (
+                        <div className={styles.outputSection}>
+                          <div className={styles.outputSectionHeader}>
+                            {runResult.success ? '✓ Stdout Output:' : '✗ Execution Error:'}
+                          </div>
+                          <pre className={styles.consoleTerminal}>
+                            {runResult.output || runResult.error || '(no stdout output)'}
+                          </pre>
+                        </div>
+                      )}
+
+                      {submitResult && (
+                        <div className={styles.outputSection}>
+                          <div className={styles.outputSectionHeader}>
+                            Evaluation Summary ({submitResult.passedCases}/{submitResult.totalCases} passed):
+                          </div>
+                          <pre className={styles.consoleTerminal}>
+                            {submitResult.compileOutput || submitResult.runOutput || 'All test cases passed.'}
+                          </pre>
+                        </div>
+                      )}
+
+                      {!runResult && !submitResult && (
+                        <div className={styles.consolePlaceholder}>
+                          No raw terminal output generated yet.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -594,7 +723,7 @@ export default function DebuggingPage() {
                 ?
               </p>
               <p style={{ fontSize: 'var(--font-size-micro)', color: 'var(--admin-text-muted)' }}>
-                Your code will be evaluated against all hidden server test cases. Once passed, Problem #{selectedIndex + 2} will be automatically unlocked!
+                Your code will be evaluated against all sample and hidden server test cases. Once passed, Problem #{selectedIndex + 2} will be automatically unlocked!
               </p>
             </div>
             <div className={styles.modalFooter}>

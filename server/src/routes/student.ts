@@ -8,7 +8,12 @@ import {
   validateStudentAnswer,
   generateSeededPuzzleBoard,
 } from '../services/eventService';
-import { executeCode, runCodePreview, TestCase } from '../services/executionService';
+import {
+  executeSampleTestCases,
+  executeSubmissionEvaluation,
+  runCodePreview,
+  TestCase,
+} from '../services/executionService';
 
 const router = Router();
 
@@ -698,7 +703,7 @@ router.get(
   }
 );
 
-// ─── DEBUGGING ROUTES (Kept 100% Intact) ──────────────────────────────────────
+// ─── DEBUGGING ROUTES ────────────────────────────────────────────────────────
 router.get(
   '/events/:id/debugging-problems',
   requireAuth,
@@ -722,6 +727,7 @@ router.get(
         description: true,
         buggyCode: true,
         expectedOutput: true,
+        sampleTestCases: true,
         testCases: true,
         points: true,
         timeLimit: true,
@@ -730,22 +736,35 @@ router.get(
     });
 
     const formattedProblems = problems.map((p) => {
-      let sampleInput = '';
+      let sampleCases: TestCase[] = [];
       try {
-        const parsed = typeof p.testCases === 'string' ? JSON.parse(p.testCases) : p.testCases;
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].input) {
-          sampleInput = parsed[0].input;
+        const parsed = typeof p.sampleTestCases === 'string' ? JSON.parse(p.sampleTestCases) : p.sampleTestCases;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          sampleCases = parsed;
         }
-      } catch {
-        // ignore JSON parse error
+      } catch {}
+
+      if (sampleCases.length === 0) {
+        try {
+          const parsed = typeof p.testCases === 'string' ? JSON.parse(p.testCases) : p.testCases;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            sampleCases = [parsed[0]];
+          } else {
+            sampleCases = [{ input: '', expectedOutput: p.expectedOutput }];
+          }
+        } catch {
+          sampleCases = [{ input: '', expectedOutput: p.expectedOutput }];
+        }
       }
+
       return {
         id: p.id,
         title: p.title,
         description: p.description,
         buggyCode: p.buggyCode,
-        expectedOutput: p.expectedOutput,
-        sampleInput,
+        expectedOutput: sampleCases[0]?.expectedOutput || p.expectedOutput,
+        sampleInput: sampleCases[0]?.input || '',
+        sampleTestCases: sampleCases,
         points: p.points,
         timeLimit: p.timeLimit,
         order: p.order,
@@ -782,13 +801,45 @@ router.post(
       return;
     }
 
-    const { code, input } = req.body as { code: string; input?: string };
+    const { code, input, problemId } = req.body as { code: string; input?: string; problemId?: string };
     if (!code || typeof code !== 'string') {
       res.status(400).json({ error: 'Code is required' });
       return;
     }
 
-    const result = await runCodePreview(code, input || '');
+    let sampleCases: TestCase[] = [];
+    if (problemId) {
+      const problem = await prisma.debuggingProblem.findFirst({
+        where: { id: problemId, eventId: event.id },
+      });
+      if (problem) {
+        try {
+          const parsed = typeof problem.sampleTestCases === 'string' ? JSON.parse(problem.sampleTestCases) : problem.sampleTestCases;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            sampleCases.push(...parsed);
+          }
+        } catch {}
+
+        if (sampleCases.length === 0) {
+          try {
+            const parsed = typeof problem.testCases === 'string' ? JSON.parse(problem.testCases) : problem.testCases;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              sampleCases.push(parsed[0]);
+            } else {
+              sampleCases.push({ input: input || '', expectedOutput: problem.expectedOutput });
+            }
+          } catch {
+            sampleCases.push({ input: input || '', expectedOutput: problem.expectedOutput });
+          }
+        }
+      }
+    }
+
+    if (sampleCases.length === 0) {
+      sampleCases = [{ input: input || '', expectedOutput: '' }];
+    }
+
+    const result = await executeSampleTestCases(code, sampleCases, 5);
     res.json(result);
   }
 );
@@ -830,12 +881,52 @@ router.post(
       return;
     }
 
-    const storedTestCases =
-      typeof problem.testCases === 'string' ? JSON.parse(problem.testCases) : problem.testCases;
-    const testCases = z
-      .array(z.object({ input: z.string(), expectedOutput: z.string() }))
-      .parse(storedTestCases) as TestCase[];
-    const execResult = await executeCode(code, testCases, problem.timeLimit);
+    // Extract sample cases
+    const sampleCases: TestCase[] = [];
+    try {
+      const parsedSample = typeof problem.sampleTestCases === 'string' ? JSON.parse(problem.sampleTestCases) : problem.sampleTestCases;
+      if (Array.isArray(parsedSample) && parsedSample.length > 0) {
+        sampleCases.push(...parsedSample);
+      }
+    } catch {}
+
+    if (sampleCases.length === 0) {
+      try {
+        const parsed = typeof problem.testCases === 'string' ? JSON.parse(problem.testCases) : problem.testCases;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          sampleCases.push(parsed[0]);
+        } else {
+          sampleCases.push({ input: '', expectedOutput: problem.expectedOutput });
+        }
+      } catch {
+        sampleCases.push({ input: '', expectedOutput: problem.expectedOutput });
+      }
+    }
+
+    // Extract hidden cases
+    const hiddenCases: TestCase[] = [];
+    try {
+      const parsedHidden = typeof problem.hiddenTestCases === 'string' ? JSON.parse(problem.hiddenTestCases) : problem.hiddenTestCases;
+      if (Array.isArray(parsedHidden) && parsedHidden.length > 0) {
+        hiddenCases.push(...parsedHidden);
+      }
+    } catch {}
+
+    if (hiddenCases.length === 0) {
+      try {
+        const parsed = typeof problem.testCases === 'string' ? JSON.parse(problem.testCases) : problem.testCases;
+        if (Array.isArray(parsed) && parsed.length > 1) {
+          hiddenCases.push(...parsed.slice(1));
+        }
+      } catch {}
+    }
+
+    const execResult = await executeSubmissionEvaluation(
+      code,
+      sampleCases,
+      hiddenCases,
+      problem.timeLimit || 5
+    );
 
     const pointsAwarded = execResult.result === 'ACCEPTED' ? problem.points : 0;
 
@@ -856,6 +947,26 @@ router.post(
       },
     });
 
+    let nextProblem = null;
+    if (execResult.result === 'ACCEPTED') {
+      nextProblem = await prisma.debuggingProblem.findFirst({
+        where: { eventId, order: { gt: problem.order } },
+        orderBy: { order: 'asc' },
+      });
+
+      // Emit Socket.IO event to unlock Problem N+1 for student and inform admin
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`event:${eventId}`).emit('debugging:problem_solved', {
+          userId,
+          eventId,
+          problemId,
+          nextProblemId: nextProblem?.id,
+          pointsAwarded: submission.pointsAwarded,
+        });
+      }
+    }
+
     res.json({
       submission: {
         id: submission.id,
@@ -865,6 +976,8 @@ router.post(
         pointsAwarded: submission.pointsAwarded,
         passedCases: execResult.passedCases,
         totalCases: execResult.totalCases,
+        testCases: execResult.testCases,
+        nextProblemId: nextProblem?.id,
         submittedAt: submission.submittedAt.toISOString(),
       },
     });
