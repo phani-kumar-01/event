@@ -136,25 +136,32 @@ export default function DebuggingPage() {
   // ── Fetch current event, problems & submissions with progress sync ──────────
   const loadEventAndProblems = useCallback(async () => {
     try {
-      const res = await api.get<{ event: Event | null }>('/current-event');
-      const currentEvent = res.data.event;
+      let debugEv: Event | null = null;
+      try {
+        const eventsRes = await api.get<{ events: Event[] }>('/events');
+        debugEv = eventsRes.data.events?.find((e) => e.type === 'DEBUGGING') || null;
+      } catch {
+        // Fallback
+      }
 
-      if (!currentEvent) {
-        navigate('/waiting');
+      if (!debugEv) {
+        const res = await api.get<{ event: Event | null }>('/current-event');
+        if (res.data.event?.type === 'DEBUGGING') {
+          debugEv = res.data.event;
+        }
+      }
+
+      if (!debugEv) {
+        navigate('/waiting?lobby=true');
         return;
       }
 
-      if (currentEvent.type !== 'DEBUGGING') {
-        navigate('/quiz');
-        return;
-      }
-
-      setEvent(currentEvent);
-      setEventVersion(currentEvent.version);
+      setEvent(debugEv);
+      setEventVersion(debugEv.version);
 
       const [probRes, subRes, progressRes] = await Promise.all([
-        api.get<{ problems: Problem[] }>(`/events/${currentEvent.id}/debugging-problems`),
-        api.get<{ submissions: Submission[] }>(`/events/${currentEvent.id}/my-submissions`).catch(() => ({ data: { submissions: [] } })),
+        api.get<{ problems: Problem[] }>(`/events/${debugEv.id}/debugging-problems`),
+        api.get<{ submissions: Submission[] }>(`/events/${debugEv.id}/my-submissions`).catch(() => ({ data: { submissions: [] } })),
         api.get<{ solvedProblemIds: string[] }>('/debugging/progress').catch(() => ({ data: { solvedProblemIds: [] } })),
       ]);
 
@@ -195,9 +202,9 @@ export default function DebuggingPage() {
       }
 
       const socket = getSocket();
-      socket.emit('join:event', currentEvent.id);
+      socket.emit('join:event', debugEv.id);
     } catch {
-      navigate('/');
+      navigate('/waiting?lobby=true');
     }
   }, [navigate]);
 
@@ -503,6 +510,13 @@ export default function DebuggingPage() {
         </div>
 
         <div className={styles.topbarRight}>
+          <button
+            className={styles.lobbyNavBtn}
+            onClick={() => navigate('/waiting?lobby=true')}
+            title="Return to Competition Lobby"
+          >
+            ← Lobby
+          </button>
           <ConnectionBadge status={connectionStatus} />
           <button className={styles.logoutBtn} onClick={logout}>
             Logout

@@ -781,3 +781,21 @@
     grid-template-columns: 1fr;
   }
 }
+
+.lobbyNavBtn {
+  background: transparent;
+  border: 1px solid var(--admin-border-dark, #cbd5e1);
+  color: var(--admin-text-muted, #475569);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.lobbyNavBtn:hover {
+  background: var(--admin-surface-alt, #f1f5f9);
+  color: var(--admin-text-main, #0f172a);
+}
+

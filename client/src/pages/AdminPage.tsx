@@ -25,6 +25,8 @@ interface Event {
   currentRound?: number;
   round1Status?: string;
   round2Status?: string;
+  round1Duration?: number;
+  round2Duration?: number;
   version: number;
 }
 
@@ -251,6 +253,9 @@ export default function AdminPage() {
     );
   }, [events, selectedEventId]);
 
+  const debugEvent = useMemo(() => events.find((e) => e.type === 'DEBUGGING'), [events]);
+  const quizEvent = useMemo(() => events.find((e) => e.type === 'TECHNICAL_QUIZ'), [events]);
+
   const isLiveRunning = currentEvent?.status === 'RUNNING';
   const { formatted: timerFormatted, remaining: timerRemaining } = useTimer(
     isLiveRunning ? currentEvent?.endTime : null
@@ -353,16 +358,17 @@ export default function AdminPage() {
   }, []);
 
   // ── 4. Unified Event Actions ───────────────────────────────────────────────
-  async function handleEventAction(action: string, body?: Record<string, unknown>) {
-    if (!currentEvent) return;
+  async function handleEventAction(action: string, body?: Record<string, unknown>, targetEventId?: string) {
+    const eventId = targetEventId || currentEvent?.id;
+    if (!eventId) return;
     setActionError('');
     setActionSuccess('');
     setActionLoading(true);
 
     try {
-      const res = await api.post(`/admin/events/${currentEvent.id}/${action}`, body);
+      const res = await api.post(`/admin/events/${eventId}/${action}`, body);
       if (res.data.event) {
-        setEvents((prev) => prev.map((e) => (e.id === currentEvent.id ? res.data.event : e)));
+        setEvents((prev) => prev.map((e) => (e.id === eventId ? res.data.event : e)));
       }
       setActionSuccess(`✓ Action completed: ${action.replace('-', ' ')}`);
       await loadEvents();
@@ -378,18 +384,19 @@ export default function AdminPage() {
   }
 
   // ── 5. Open Qualify Preview Modal ──────────────────────────────────────────
-  async function openQualifyModal() {
-    if (!currentEvent) return;
+  async function openQualifyModal(targetEventId?: string) {
+    const evId = targetEventId || quizEvent?.id || currentEvent?.id;
+    if (!evId) return;
     setActionError('');
     try {
       const res = await api.get<{ qualifications: Qualification[] }>(
-        `/admin/events/${currentEvent.id}/round1-leaderboard`
+        `/admin/events/${evId}/round1-leaderboard`
       );
       if (res.data.qualifications && res.data.qualifications.length > 0) {
         setQualifyPreviewList(res.data.qualifications.slice(0, 10));
       } else {
         const qualRes = await api.post<{ qualifications: Qualification[] }>(
-          `/admin/events/${currentEvent.id}/qualify-round1`,
+          `/admin/events/${evId}/qualify-round1`,
           { topCount: 10 }
         );
         setQualifyPreviewList(qualRes.data.qualifications.filter((q) => q.isQualified));
@@ -403,11 +410,12 @@ export default function AdminPage() {
     }
   }
 
-  async function confirmQualifyRound1() {
-    if (!currentEvent) return;
+  async function confirmQualifyRound1(targetEventId?: string) {
+    const evId = targetEventId || quizEvent?.id || currentEvent?.id;
+    if (!evId) return;
     setActionLoading(true);
     try {
-      await api.post(`/admin/events/${currentEvent.id}/qualify-round1`, { topCount: 10 });
+      await api.post(`/admin/events/${evId}/qualify-round1`, { topCount: 10 });
       setActionSuccess('✓ Top 10 Qualifiers successfully promoted and locked in for Round 2!');
       setQualifyModalOpen(false);
       await loadEvents();
@@ -902,7 +910,7 @@ export default function AdminPage() {
             <button
               className={styles.btnPrimary}
               disabled={actionLoading}
-              onClick={openQualifyModal}
+              onClick={() => openQualifyModal()}
             >
               👑 Review &amp; Qualify Top 10 for Round 2
             </button>
@@ -920,7 +928,7 @@ export default function AdminPage() {
               <button
                 className={styles.btnSecondary}
                 disabled={actionLoading}
-                onClick={openQualifyModal}
+                onClick={() => openQualifyModal()}
               >
                 Re-check Top 10
               </button>
@@ -1058,9 +1066,50 @@ export default function AdminPage() {
               {activeTab === 'quiz_hub' && '⚡ Technical Quiz Stage & Question Hub'}
               {activeTab === 'debugging' && '🛠️ C Debugging Problems & Sandbox'}
               {activeTab === 'students' && '👥 Registered Students Directory'}
+              {activeTab === 'runner_test' && '⚡ Local C Runner Benchmark & Test'}
             </span>
           </div>
           <div className={styles.contentTopbarRight}>
+            <div className={styles.eventToggleGroup}>
+              {debugEvent && (
+                <button
+                  type="button"
+                  className={`${styles.eventToggleBtn} ${currentEvent?.id === debugEvent.id ? styles.eventToggleBtnActive : ''}`}
+                  onClick={() => setSelectedEventId(debugEvent.id)}
+                  title="Switch active event to C Debugging Arena"
+                >
+                  <span
+                    className={`${styles.statusDotSmall} ${
+                      debugEvent.status === 'RUNNING' ? styles.dotRunning : styles.dotIdle
+                    }`}
+                  />
+                  <span>🛠️ C Debugging</span>
+                  <span className={styles.toggleStatusBadge}>{debugEvent.status}</span>
+                </button>
+              )}
+              {quizEvent && (
+                <button
+                  type="button"
+                  className={`${styles.eventToggleBtn} ${currentEvent?.id === quizEvent.id ? styles.eventToggleBtnActive : ''}`}
+                  onClick={() => setSelectedEventId(quizEvent.id)}
+                  title="Switch active event to Technical Quiz"
+                >
+                  <span
+                    className={`${styles.statusDotSmall} ${
+                      quizEvent.status === 'RUNNING' ? styles.dotRunning : styles.dotIdle
+                    }`}
+                  />
+                  <span>⚡ Tech Quiz</span>
+                  <span className={styles.toggleStatusBadge}>
+                    {quizEvent.status === 'RUNNING'
+                      ? quizEvent.currentRound === 2
+                        ? 'R2 LIVE'
+                        : 'R1 LIVE'
+                      : quizEvent.status}
+                  </span>
+                </button>
+              )}
+            </div>
             <button
               className={styles.btnSecondary}
               style={{ padding: '4px 12px', fontSize: '12px' }}
@@ -1238,6 +1287,148 @@ export default function AdminPage() {
         {/* ── TAB 3: QUIZ MANAGEMENT ───────────────────────────────────────── */}
         {activeTab === 'quiz_hub' && (
           <>
+            {/* Technical Quiz Live Event Status & Round Controls Strip */}
+            <div className={styles.minimalEventBar}>
+              <div className={styles.minimalEventInfo}>
+                <div className={styles.minimalEventTitleRow}>
+                  <span className={styles.minimalEventTitle}>⚡ Technical Quiz Showdown</span>
+                  <span
+                    className={`${styles.commandStateBadge} ${
+                      styles[`badge${quizEvent?.status || 'READY'}`]
+                    }`}
+                  >
+                    {quizEvent?.status || 'READY'}
+                  </span>
+                  <span className={styles.roundPill}>
+                    {quizEvent?.currentRound === 2 ? 'Round 2: Championship' : 'Round 1: Qualifiers'}
+                  </span>
+                  {quizEvent?.status === 'RUNNING' && <span className={styles.livePulseDot} />}
+                </div>
+                <div className={styles.minimalEventSub}>
+                  <span>
+                    Round 1: <strong>{quizEvent?.round1Status || 'READY'}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Round 2: <strong>{quizEvent?.round2Status || 'DRAFT'}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Qualifiers:{' '}
+                    <strong>{hasQualifiersPromoted ? 'Promoted (Top 10)' : 'Pending'}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Duration: {Math.floor((quizEvent?.round1Duration || 1800) / 60)}m (R1) / {Math.floor((quizEvent?.round2Duration || 1200) / 60)}m (R2)
+                  </span>
+                </div>
+              </div>
+
+              <div className={styles.minimalEventActions}>
+                {quizEvent?.status === 'READY' && (
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={actionLoading}
+                    onClick={() => handleEventAction('start-round1', undefined, quizEvent.id)}
+                  >
+                    {actionLoading ? 'Starting...' : '🚀 Start Round 1 (Qualifiers)'}
+                  </button>
+                )}
+                {quizEvent?.status === 'RUNNING' && quizEvent.currentRound === 1 && (
+                  <>
+                    <button
+                      className={styles.btnWarning}
+                      disabled={actionLoading}
+                      onClick={() => handleEventAction('pause-round1', undefined, quizEvent.id)}
+                    >
+                      ⏸ Pause Round 1
+                    </button>
+                    <button
+                      className={styles.btnDangerOutline}
+                      disabled={actionLoading}
+                      onClick={() => {
+                        if (confirm('Finish Round 1 for all participants now?')) {
+                          handleEventAction('end-round1', undefined, quizEvent.id);
+                        }
+                      }}
+                    >
+                      ⏹ End Round 1
+                    </button>
+                  </>
+                )}
+                {quizEvent?.round1Status === 'FINISHED' && !hasQualifiersPromoted && (
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={actionLoading}
+                    onClick={() => openQualifyModal(quizEvent.id)}
+                  >
+                    🏆 Promote & Lock Top 10 Qualifiers
+                  </button>
+                )}
+                {quizEvent?.round1Status === 'FINISHED' &&
+                  hasQualifiersPromoted &&
+                  quizEvent.round2Status !== 'RUNNING' &&
+                  quizEvent.round2Status !== 'FINISHED' && (
+                    <button
+                      className={styles.btnPrimary}
+                      disabled={actionLoading}
+                      onClick={() => handleEventAction('start-round2', undefined, quizEvent.id)}
+                    >
+                      {actionLoading ? 'Starting...' : '🚀 Start Round 2 (Championship)'}
+                    </button>
+                  )}
+                {quizEvent?.status === 'RUNNING' && quizEvent.currentRound === 2 && (
+                  <>
+                    <button
+                      className={styles.btnWarning}
+                      disabled={actionLoading}
+                      onClick={() => handleEventAction('pause-round2', undefined, quizEvent.id)}
+                    >
+                      ⏸ Pause Round 2
+                    </button>
+                    <button
+                      className={styles.btnDangerOutline}
+                      disabled={actionLoading}
+                      onClick={() => {
+                        if (confirm('End Round 2 and finalize Championship results?')) {
+                          handleEventAction('end-round2', undefined, quizEvent.id);
+                        }
+                      }}
+                    >
+                      🏁 End Round 2 & Finalize
+                    </button>
+                  </>
+                )}
+                {quizEvent?.status === 'PAUSED' && (
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={actionLoading}
+                    onClick={() =>
+                      handleEventAction(
+                        quizEvent.currentRound === 1 ? 'resume-round1' : 'resume-round2',
+                        undefined,
+                        quizEvent.id
+                      )
+                    }
+                  >
+                    ▶ Resume {quizEvent.currentRound === 1 ? 'Round 1' : 'Round 2'}
+                  </button>
+                )}
+                <button
+                  className={styles.btnSecondary}
+                  disabled={actionLoading}
+                  onClick={() => {
+                    if (confirm('Reset Quiz Event to READY state? (Preserves questions & challenges)')) {
+                      handleEventAction('reset', undefined, quizEvent?.id);
+                    }
+                  }}
+                  title="Reset quiz event to READY state"
+                >
+                  🔄 Reset Event
+                </button>
+              </div>
+            </div>
+
             {/* Round Switcher Header (Top Controller) */}
             <div className={styles.commandCard} style={{ padding: '0.85rem 1.25rem' }}>
               <div
@@ -1497,7 +1688,115 @@ export default function AdminPage() {
 
         {/* ── TAB 4: DEBUGGING ARENA ───────────────────────────────────────── */}
         {activeTab === 'debugging' && (
-          <div className={styles.panelCard}>
+          <>
+            {/* C Debugging Live Event Status & Execution Controls Strip */}
+            <div className={styles.minimalEventBar}>
+              <div className={styles.minimalEventInfo}>
+                <div className={styles.minimalEventTitleRow}>
+                  <span className={styles.minimalEventTitle}>🛠️ Live C Debugging Arena</span>
+                  <span
+                    className={`${styles.commandStateBadge} ${
+                      styles[`badge${debugEvent?.status || 'READY'}`]
+                    }`}
+                  >
+                    {debugEvent?.status || 'READY'}
+                  </span>
+                  {debugEvent?.status === 'RUNNING' && <span className={styles.livePulseDot} />}
+                </div>
+                <div className={styles.minimalEventSub}>
+                  <span>
+                    Duration: {Math.floor((debugEvent?.durationSeconds || 3600) / 60)} mins
+                  </span>
+                  <span>•</span>
+                  <span>{problems.length} Problems Loaded</span>
+                  <span>•</span>
+                  <span>GCC C11 Execution Sandbox (Pool: 8 Concurrency)</span>
+                </div>
+              </div>
+
+              <div className={styles.minimalEventActions}>
+                {debugEvent?.status === 'READY' && (
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={actionLoading}
+                    onClick={() => handleEventAction('start', undefined, debugEvent.id)}
+                  >
+                    {actionLoading ? 'Starting...' : '🚀 Launch Arena (Make RUNNING)'}
+                  </button>
+                )}
+                {debugEvent?.status === 'RUNNING' && (
+                  <>
+                    <button
+                      className={styles.btnWarning}
+                      disabled={actionLoading}
+                      onClick={() => handleEventAction('pause', undefined, debugEvent.id)}
+                    >
+                      ⏸ Pause Arena
+                    </button>
+                    <button
+                      className={styles.btnDangerOutline}
+                      disabled={actionLoading}
+                      onClick={() => {
+                        if (confirm('End C Debugging Arena for all participants now?')) {
+                          handleEventAction('end', undefined, debugEvent.id);
+                        }
+                      }}
+                    >
+                      ⏹ End Arena
+                    </button>
+                  </>
+                )}
+                {debugEvent?.status === 'PAUSED' && (
+                  <>
+                    <button
+                      className={styles.btnPrimary}
+                      disabled={actionLoading}
+                      onClick={() => handleEventAction('resume', undefined, debugEvent.id)}
+                    >
+                      ▶ Resume Arena
+                    </button>
+                    <button
+                      className={styles.btnDangerOutline}
+                      disabled={actionLoading}
+                      onClick={() => {
+                        if (confirm('End C Debugging Arena?')) {
+                          handleEventAction('end', undefined, debugEvent.id);
+                        }
+                      }}
+                    >
+                      ⏹ End Arena
+                    </button>
+                  </>
+                )}
+                {(debugEvent?.status === 'FINISHED' || debugEvent?.status === 'DRAFT') && (
+                  <button
+                    className={styles.btnPrimary}
+                    disabled={actionLoading}
+                    onClick={() => handleEventAction('ready', undefined, debugEvent.id)}
+                  >
+                    Set Arena to Ready
+                  </button>
+                )}
+                <button
+                  className={styles.btnSecondary}
+                  disabled={actionLoading}
+                  onClick={() => {
+                    if (
+                      confirm(
+                        'Reset Debugging Arena back to READY? (Preserves problems, resets status)'
+                      )
+                    ) {
+                      handleEventAction('reset', undefined, debugEvent?.id);
+                    }
+                  }}
+                  title="Reset C Debugging event back to READY"
+                >
+                  🔄 Reset Event
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.panelCard}>
             <div className={styles.panelHeader}>
               <div className={styles.panelTitle}>
                 <span>🐛 C Debugging Problems ({problems.length})</span>
@@ -1573,7 +1872,8 @@ export default function AdminPage() {
               </table>
             </div>
           </div>
-        )}
+        </>
+      )}
 
         {/* ── TAB 5: STUDENTS DIRECTORY ────────────────────────────────────── */}
         {activeTab === 'students' && (
@@ -1824,7 +2124,7 @@ export default function AdminPage() {
               <button
                 className={styles.btnPrimary}
                 disabled={actionLoading || qualifyPreviewList.length === 0}
-                onClick={confirmQualifyRound1}
+                onClick={() => confirmQualifyRound1()}
               >
                 {actionLoading ? 'Locking In...' : '✓ Confirm Top 10 & Enable Round 2'}
               </button>

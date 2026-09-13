@@ -1007,4 +1007,22 @@
   }
 }
 
+.lobbyNavBtn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--admin-border, #334155);
+  color: var(--admin-text-main, #f8fafc);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.lobbyNavBtn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: #64748b;
+}
+
+
 

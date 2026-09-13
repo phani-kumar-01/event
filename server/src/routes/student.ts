@@ -122,6 +122,77 @@ router.get('/current-event', requireAuth, async (req: AuthRequest, res: Response
   });
 });
 
+// ─── GET /api/events (All events for student dashboard) ───────────────────────
+router.get('/events', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  const allEvents = await withDbRetry(() =>
+    prisma.event.findMany({
+      orderBy: { createdAt: 'asc' },
+    })
+  );
+
+  const studentId = req.user!.userId;
+
+  const eventPayloads = await Promise.all(
+    allEvents.map(async (event) => {
+      let isQualifiedForRound2 = false;
+      let qualification = null;
+      let hasQualifications = false;
+      let isLocked = false;
+      let lockReason: string | undefined = undefined;
+
+      if (event.type === 'TECHNICAL_QUIZ') {
+        const qualCount = await prisma.quizQualification.count({
+          where: { eventId: event.id },
+        });
+        hasQualifications = qualCount > 0;
+
+        qualification = await prisma.quizQualification.findUnique({
+          where: { eventId_userId: { eventId: event.id, userId: studentId } },
+        });
+        isQualifiedForRound2 = !!qualification?.isQualified;
+
+        if (event.round1Status === 'FINISHED' && hasQualifications && !isQualifiedForRound2) {
+          isLocked = true;
+          lockReason = 'not_qualified';
+        }
+      }
+
+      return {
+        id: event.id,
+        type: event.type,
+        name: event.name,
+        status: event.status,
+        startTime: event.startTime.toISOString(),
+        endTime: event.endTime.toISOString(),
+        version: event.version,
+        durationSeconds: event.durationSeconds,
+        currentRound: event.currentRound || 1,
+        round1Status: event.round1Status || 'DRAFT',
+        round2Status: event.round2Status || 'DRAFT',
+        round1Duration: event.round1Duration || 1800,
+        round2Duration: event.round2Duration || 1200,
+        qualifierCount: event.qualifierCount || 10,
+        isQualifiedForRound2,
+        locked: isLocked,
+        reason: lockReason,
+        hasQualifications,
+        qualification: qualification
+          ? {
+              isQualified: qualification.isQualified,
+              round1Score: qualification.round1Score,
+              round1Rank: qualification.round1Rank,
+              round2Score: qualification.round2Score,
+              finalScore: qualification.finalScore,
+              finalRank: qualification.finalRank,
+            }
+          : null,
+      };
+    })
+  );
+
+  res.json({ events: eventPayloads });
+});
+
 // ─── GET /api/events/:id ─────────────────────────────────────────────────────
 router.get('/events/:id', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   const event = await prisma.event.findUnique({ where: { id: String(req.params.id) } });

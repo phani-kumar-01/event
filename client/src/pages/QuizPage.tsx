@@ -112,42 +112,47 @@ export default function QuizPage() {
   // ── 1. Fetch current event & check state ──────────────────────────────────
   const loadCurrentEvent = useCallback(async () => {
     try {
-      const res = await api.get<{
-        event: EventData | null;
-        locked?: boolean;
-        reason?: string;
-      }>('/current-event');
-
-      const cur = res.data.event;
-      const isLocked =
-        res.data.locked ||
-        cur?.locked ||
-        (cur?.type === 'TECHNICAL_QUIZ' &&
-          cur?.round1Status === 'FINISHED' &&
-          !cur?.isQualifiedForRound2);
+      let cur: EventData | null = null;
+      try {
+        const eventsRes = await api.get<{ events: EventData[] }>('/events');
+        cur = eventsRes.data.events?.find((e) => e.type === 'TECHNICAL_QUIZ') || null;
+      } catch {
+        // Fallback
+      }
 
       if (!cur) {
-        navigate('/waiting');
+        const res = await api.get<{
+          event: EventData | null;
+          locked?: boolean;
+          reason?: string;
+        }>('/current-event');
+        if (res.data.event?.type === 'TECHNICAL_QUIZ') {
+          cur = res.data.event;
+        }
+      }
+
+      if (!cur) {
+        navigate('/waiting?lobby=true');
         return;
       }
+
+      const isLocked =
+        cur.locked ||
+        (cur.round1Status === 'FINISHED' &&
+          (cur.hasQualifications ?? false) &&
+          !cur.isQualifiedForRound2);
 
       if (isLocked) {
-        navigate('/waiting');
-        return;
-      }
-
-      if (cur.type === 'DEBUGGING') {
-        navigate('/debugging');
+        navigate('/waiting?lobby=true');
         return;
       }
 
       if (
-        cur.type === 'TECHNICAL_QUIZ' &&
         cur.round1Status === 'FINISHED' &&
         cur.isQualifiedForRound2 &&
         cur.round2Status !== 'RUNNING'
       ) {
-        navigate('/waiting');
+        navigate('/waiting?lobby=true');
         return;
       }
 
@@ -157,7 +162,7 @@ export default function QuizPage() {
       const socket = getSocket();
       socket.emit('join:event', cur.id);
     } catch {
-      navigate('/');
+      navigate('/waiting?lobby=true');
     }
   }, [navigate]);
 
@@ -500,6 +505,13 @@ export default function QuizPage() {
             </div>
           </div>
           <div className={styles.topbarRight}>
+            <button
+              className={styles.lobbyNavBtn}
+              onClick={() => navigate('/waiting?lobby=true')}
+              title="Return to Competition Lobby"
+            >
+              ← Lobby
+            </button>
             <ConnectionBadge status={connectionStatus} />
             <button className={styles.logoutBtn} onClick={logout}>
               Logout
@@ -565,6 +577,13 @@ export default function QuizPage() {
         </div>
 
         <div className={styles.topbarRight}>
+          <button
+            className={styles.lobbyNavBtn}
+            onClick={() => navigate('/waiting?lobby=true')}
+            title="Return to Competition Lobby"
+          >
+            ← Lobby
+          </button>
           <ConnectionBadge status={connectionStatus} />
           <button className={styles.logoutBtn} onClick={logout}>
             Logout
