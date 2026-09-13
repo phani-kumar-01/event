@@ -22,4 +22,28 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    target: 'esnext',
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('@monaco-editor') || id.includes('monaco-editor')) {
+            return 'monaco-vendor';
+          }
+          if (
+            id.includes('node_modules/react') ||
+            id.includes('node_modules/react-dom') ||
+            id.includes('node_modules/react-router') ||
+            id.includes('node_modules/@remix-run')
+          ) {
+            return 'react-vendor';
+          }
+          if (id.includes('socket.io-client') || id.includes('engine.io-client')) {
+            return 'socket-vendor';
+          }
+        },
+      },
+    },
+  },
 });

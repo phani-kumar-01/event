@@ -55,19 +55,49 @@ const io = new Server(httpServer, {
 // Make io accessible in route handlers
 app.set('io', io);
 
+import { checkDatabaseHealth } from './utils/prisma';
+
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '512kb' }));
+app.use(express.urlencoded({ extended: true, limit: '512kb' }));
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api', studentRoutes);
+app.use('/api/admin', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', studentRoutes);
+app.use('/api/student', authRoutes);
+app.use('/api/student', studentRoutes);
+app.use('/api', authRoutes);
+app.use('/api', studentRoutes);
+app.use('/api', adminRoutes);
 app.use('/api/debugging', debuggingRoutes);
+import benchmarkRoutes from './routes/benchmark';
+import { setBenchmarkIo } from './services/benchmarkService';
+app.use('/api/admin/benchmark', benchmarkRoutes);
 
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+import { getRunnerStats } from './services/runnerBridge';
+import { cExecutionQueue } from './services/cRunner';
+
+// Health check with database connectivity probe and runner worker status
+app.get('/api/health', async (_req, res) => {
+  const dbHealth = await checkDatabaseHealth();
+  const runnerStats = getRunnerStats();
+  const queueStats = {
+    configuredMaxConcurrency: cExecutionQueue.getMaxConcurrency ? cExecutionQueue.getMaxConcurrency() : 8,
+    activeWorkers: cExecutionQueue.getActiveCount ? cExecutionQueue.getActiveCount() : 0,
+    queueDepth: cExecutionQueue.getQueueDepth ? cExecutionQueue.getQueueDepth() : 0,
+    peakActive: cExecutionQueue.getPeakActive ? cExecutionQueue.getPeakActive() : 0,
+  };
+  const statusCode = dbHealth.ok ? 200 : 503;
+  res.status(statusCode).json({
+    status: dbHealth.ok ? 'ok' : 'degraded',
+    database: dbHealth,
+    runners: runnerStats,
+    queue: queueStats,
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Error handler (must be last)
@@ -75,6 +105,7 @@ app.use(errorHandler);
 
 // Initialize Socket.IO
 initSocket(io);
+setBenchmarkIo(io);
 
 const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, () => {

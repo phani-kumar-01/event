@@ -4,11 +4,23 @@ import { Event } from '@prisma/client';
 type EventStatus = 'DRAFT' | 'READY' | 'RUNNING' | 'PAUSED' | 'FINISHED';
 type EventType = 'DEBUGGING' | 'TECHNICAL_QUIZ';
 
+let cachedCurrentEvent: { event: Event | null; timestamp: number } | null = null;
+
+export function invalidateCurrentEventCache(): void {
+  cachedCurrentEvent = null;
+}
+
 /**
  * Determine the currently active event based on server time.
  * Returns null if no event is currently scheduled to be running.
+ * Cached for 3 seconds to protect database under 120-student concurrent load.
  */
 export async function getCurrentEvent(): Promise<Event | null> {
+  const now = Date.now();
+  if (cachedCurrentEvent && now - cachedCurrentEvent.timestamp < 3000) {
+    return cachedCurrentEvent.event;
+  }
+
   // 1. Prioritize currently RUNNING or PAUSED event
   let event = await prisma.event.findFirst({
     where: {
@@ -16,35 +28,40 @@ export async function getCurrentEvent(): Promise<Event | null> {
     },
     orderBy: { updatedAt: 'desc' },
   });
-  if (event) return event;
 
   // 2. Look for an event that is READY
-  event = await prisma.event.findFirst({
-    where: {
-      status: 'READY',
-    },
-    orderBy: { startTime: 'asc' },
-  });
-  if (event) return event;
+  if (!event) {
+    event = await prisma.event.findFirst({
+      where: {
+        status: 'READY',
+      },
+      orderBy: { startTime: 'asc' },
+    });
+  }
 
   // 3. Look for a Technical Quiz event in intermission (Round 1 finished, Round 2 not finished yet)
-  event = await prisma.event.findFirst({
-    where: {
-      type: 'TECHNICAL_QUIZ',
-      round1Status: 'FINISHED',
-      round2Status: { not: 'FINISHED' },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
-  if (event) return event;
+  if (!event) {
+    event = await prisma.event.findFirst({
+      where: {
+        type: 'TECHNICAL_QUIZ',
+        round1Status: 'FINISHED',
+        round2Status: { not: 'FINISHED' },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
 
   // 4. Look for the most recent event (e.g. FINISHED or DRAFT)
-  event = await prisma.event.findFirst({
-    where: {
-      status: { in: ['FINISHED', 'DRAFT'] },
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
+  if (!event) {
+    event = await prisma.event.findFirst({
+      where: {
+        status: { in: ['FINISHED', 'DRAFT'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  cachedCurrentEvent = { event, timestamp: now };
   return event;
 }
 
@@ -880,5 +897,47 @@ export function generateSeededPuzzleBoard(userId: string, challengeId: string, m
   return board;
 }
 
+/**
+ * Reset an event to READY/DRAFT state and clear all student submissions and answers,
+ * allowing students to take the exam multiple times without data conflicts.
+ */
+export async function resetEvent(eventId: string) {
+  await prisma.$transaction([
+    prisma.answer.deleteMany({ where: { eventId } }),
+    prisma.submission.deleteMany({ where: { eventId } }),
+    prisma.puzzleSubmission.deleteMany({ where: { eventId } }),
+    prisma.quizQualification.deleteMany({ where: { eventId } }),
+    prisma.studentQuestionOrder.deleteMany({}),
+  ]);
+
+  const updatedEvent = await prisma.event.update({
+    where: { id: eventId },
+    data: {
+      status: 'READY',
+      currentRound: 1,
+      round1Status: 'DRAFT',
+      round2Status: 'DRAFT',
+      version: { increment: 1 },
+    },
+  });
+
+  return updatedEvent;
+}
+
+/**
+ * Reset a single student's exam attempt for an event.
+ */
+export async function resetStudentExam(eventId: string, userId: string) {
+  await prisma.$transaction([
+    prisma.answer.deleteMany({ where: { eventId, userId } }),
+    prisma.submission.deleteMany({ where: { eventId, userId } }),
+    prisma.puzzleSubmission.deleteMany({ where: { eventId, userId } }),
+    prisma.quizQualification.deleteMany({ where: { eventId, userId } }),
+    prisma.studentQuestionOrder.deleteMany({ where: { userId } }),
+  ]);
+  return { success: true, eventId, userId };
+}
+
 export type { EventType };
+
 

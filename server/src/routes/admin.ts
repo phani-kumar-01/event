@@ -20,6 +20,8 @@ import {
   resumeRound2,
   endRound2,
   computeFinalRankings,
+  resetEvent,
+  resetStudentExam,
 } from '../services/eventService';
 import { emitEventStateChanged } from '../socket/socketManager';
 import path from 'path';
@@ -166,6 +168,29 @@ router.post('/events/:id/end', requireAdmin, async (req: AuthRequest, res: Respo
     const event = await endEvent(String(req.params.id));
     emitEventStateChanged(getIo(req), event);
     res.json({ event });
+  } catch (e: unknown) {
+    res.status(409).json({ error: (e as Error).message });
+  }
+});
+
+router.post('/events/:id/reset', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const event = await resetEvent(String(req.params.id));
+    emitEventStateChanged(getIo(req), event);
+    getIo(req).to(`event:${event.id}`).emit('event.reset', { eventId: event.id });
+    res.json({ event, message: 'Event reset successfully for retakes.' });
+  } catch (e: unknown) {
+    res.status(409).json({ error: (e as Error).message });
+  }
+});
+
+router.post('/events/:id/students/:userId/reset', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const eventId = String(req.params.id);
+    const userId = String(req.params.userId);
+    const result = await resetStudentExam(eventId, userId);
+    getIo(req).emit('student.reset', { eventId, userId });
+    res.json(result);
   } catch (e: unknown) {
     res.status(409).json({ error: (e as Error).message });
   }
@@ -742,14 +767,21 @@ router.delete('/debugging-problems/:id', requireAdmin, async (req: AuthRequest, 
 router.get('/students', requireAdmin, async (_req: AuthRequest, res: Response): Promise<void> => {
   const students = await prisma.user.findMany({
     where: { role: 'STUDENT' },
-    select: { id: true, rollNo: true, name: true, createdAt: true },
+    select: { id: true, rollNo: true, name: true, year: true, class: true, section: true, createdAt: true },
     orderBy: { rollNo: 'asc' },
   });
   res.json({ students });
 });
 
 router.post('/students', requireAdmin, async (req: AuthRequest, res: Response): Promise<void> => {
-  const { rollNo, name, password } = req.body as { rollNo: string; name: string; password: string };
+  const { rollNo, name, password, year, class: studentClass, section } = req.body as {
+    rollNo: string;
+    name: string;
+    password: string;
+    year?: string;
+    class?: string;
+    section?: string;
+  };
   if (!rollNo || !name || !password) {
     res.status(400).json({ error: 'rollNo, name, and password are required' });
     return;
@@ -760,8 +792,16 @@ router.post('/students', requireAdmin, async (req: AuthRequest, res: Response): 
 
   try {
     const user = await prisma.user.create({
-      data: { rollNo: rollNo.toUpperCase(), name, passwordHash: hash, role: 'STUDENT' },
-      select: { id: true, rollNo: true, name: true, createdAt: true },
+      data: {
+        rollNo: rollNo.toUpperCase(),
+        name,
+        passwordHash: hash,
+        role: 'STUDENT',
+        year: year || null,
+        class: studentClass || null,
+        section: section || null,
+      },
+      select: { id: true, rollNo: true, name: true, year: true, class: true, section: true, createdAt: true },
     });
     res.status(201).json({ user });
   } catch {
@@ -843,6 +883,10 @@ router.post(
     const headers = (rawRows[headerRowIdx] as string[]).map((h) => String(h || '').trim().toLowerCase());
     const regdCol = headers.findIndex((h) => h.includes('student') || h.includes('regd') || h.includes('roll'));
     const nameCol = headers.findIndex((h) => h.includes('name'));
+    const passCol = headers.findIndex((h) => h.includes('password') || h.includes('pass') || h.includes('pwd'));
+    const yearCol = headers.findIndex((h) => h.includes('year') || h.includes('yr'));
+    const classCol = headers.findIndex((h) => h.includes('class') || h.includes('dept') || h.includes('branch') || h.includes('department') || h.includes('course'));
+    const secCol = headers.findIndex((h) => h.includes('sec') || h.includes('section'));
 
     if (regdCol === -1 || nameCol === -1) {
       res.status(400).json({ error: 'Excel sheet must contain at least Student ID/Regd No and Full Name columns.' });
@@ -861,20 +905,32 @@ router.post(
 
       const rollNo = String(row[regdCol] || '').trim().toUpperCase();
       const name = String(row[nameCol] || '').trim();
+      const rawPassword = passCol !== -1 && row[passCol] ? String(row[passCol]).trim() : '';
+      const year = yearCol !== -1 && row[yearCol] ? String(row[yearCol]).trim() : undefined;
+      const studentClass = classCol !== -1 && row[classCol] ? String(row[classCol]).trim() : undefined;
+      const section = secCol !== -1 && row[secCol] ? String(row[secCol]).trim() : undefined;
 
       if (!rollNo || !name) continue;
 
       try {
+        const passwordHash = rawPassword ? await bcrypt.hash(rawPassword, 10) : defaultPasswordHash;
         await prisma.user.upsert({
           where: { rollNo },
           create: {
             rollNo,
             name,
-            passwordHash: defaultPasswordHash,
+            passwordHash,
             role: 'STUDENT',
+            year: year || null,
+            class: studentClass || null,
+            section: section || null,
           },
           update: {
             name,
+            ...(rawPassword ? { passwordHash } : {}),
+            ...(year !== undefined ? { year } : {}),
+            ...(studentClass !== undefined ? { class: studentClass } : {}),
+            ...(section !== undefined ? { section } : {}),
           },
         });
         imported.push({ rollNo, name });

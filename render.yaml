@@ -1,0 +1,39 @@
+services:
+  # Backend API & Socket Server
+  - type: web
+    name: code-arena-backend
+    env: node
+    plan: standard
+    buildCommand: npm install && cd server && npm install && npm run build
+    startCommand: cd server && npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        value: https://code-arena-student.onrender.com
+
+  # Student Portal (Frontend Static Site)
+  - type: web
+    name: code-arena-student
+    env: static
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: client/dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://code-arena-backend.onrender.com/api
+      - key: VITE_SOCKET_URL
+        value: https://code-arena-backend.onrender.com

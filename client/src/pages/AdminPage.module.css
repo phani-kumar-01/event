@@ -69,11 +69,12 @@
   --shadow-modal: 0 20px 30px -6px rgba(15, 23, 42, 0.16), 0 10px 14px -4px rgba(15, 23, 42, 0.08);
 }
 
-/* ── Container Layout ────────────────────────────────────────────────────── */
+/* ── Container Layout with Left Sidebar ───────────────────────────────────── */
 .page {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
+  width: 100vw;
   overflow: hidden;
   background: var(--admin-bg);
   color: var(--admin-text-main);
@@ -81,23 +82,28 @@
   font-size: var(--font-size-body);
 }
 
-/* ── Persistent Control Room Top Bar ─────────────────────────────────────── */
-.topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+/* ── Sidebar Navigation ──────────────────────────────────────────────────── */
+.sidebar {
+  width: 270px;
+  min-width: 270px;
+  max-width: 270px;
+  height: 100vh;
   background: var(--admin-surface);
-  border-bottom: 1px solid var(--admin-border);
-  padding: var(--space-3) var(--space-6);
+  border-right: 1px solid var(--admin-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
   flex-shrink: 0;
-  z-index: 100;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  z-index: 50;
+  box-shadow: 2px 0 8px rgba(15, 23, 42, 0.04);
 }
 
-.topbarLeft {
+.sidebarTop {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  padding: var(--space-4);
+  gap: var(--space-4);
+  overflow-y: auto;
 }
 
 .brandTitle {
@@ -105,68 +111,62 @@
   align-items: center;
   gap: var(--space-2);
   text-decoration: none;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--admin-border);
 }
 
 .headerLogo {
-  height: 36px;
+  height: 32px;
   width: auto;
-  max-width: 200px;
+  max-width: 160px;
   object-fit: contain;
   display: block;
 }
 
 .brandSlash {
   color: var(--admin-border-dark);
-  font-size: 1rem;
+  font-size: 0.875rem;
   font-weight: 300;
 }
 
 .brandSubtext {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 800;
-  color: var(--admin-navy);
+  color: var(--admin-red);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
 }
 
-.eliteBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 4px 10px;
+/* Sidebar Live Status Card */
+.sidebarStatusCard {
   background: var(--admin-surface-alt);
   border: 1px solid var(--admin-border);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
-.eliteMiniLogo {
-  height: 18px;
-  width: 18px;
-  object-fit: contain;
-  border-radius: 2px;
-}
-
-.eliteBadgeText {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--admin-navy);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.sidebarStatusHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .liveEventPill {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
+  gap: var(--space-1);
+  padding: 2px 8px;
   border-radius: var(--radius-full);
-  font-size: var(--font-size-micro);
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   border: 1px solid var(--admin-border);
-  background: var(--admin-surface-alt);
+  background: var(--admin-surface);
 }
 
 .liveEventPillActive {
@@ -176,8 +176,8 @@
 }
 
 .liveDot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: var(--radius-full);
   background: var(--admin-red);
   animation: pulseDot 1.5s infinite;
@@ -189,35 +189,14 @@
   100% { opacity: 1; transform: scale(1); }
 }
 
-.roundPill {
-  background: var(--admin-surface-alt);
-  color: var(--admin-text-main);
-  border: 1px solid var(--admin-border);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.topbarCenter {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.timerBlock {
+.sidebarTimerRow {
   display: flex;
   align-items: baseline;
-  gap: var(--space-2);
-  background: var(--admin-surface-alt);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--admin-border);
+  justify-content: space-between;
 }
 
 .timerLabel {
-  font-size: var(--font-size-micro);
+  font-size: 11px;
   font-weight: 700;
   color: var(--admin-text-muted);
   text-transform: uppercase;
@@ -225,9 +204,9 @@
 
 .timerValue {
   font-family: var(--font-mono, monospace);
-  font-size: 1.125rem;
+  font-size: 1.15rem;
   font-weight: 800;
-  color: var(--admin-text-main);
+  color: var(--admin-navy);
   letter-spacing: 0.02em;
 }
 
@@ -235,35 +214,120 @@
   color: var(--admin-red);
 }
 
-.topbarRight {
+/* Sidebar Navigation Items */
+.sidebarNav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebarNavItem {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--admin-text-muted);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.sidebarNavItem:hover {
+  background: var(--admin-surface-hover);
+  color: var(--admin-text-main);
+  border-color: var(--admin-border);
+}
+
+.sidebarNavItemActive {
+  background: var(--admin-red-subtle) !important;
+  color: var(--admin-red) !important;
+  border-color: var(--admin-red-tint) !important;
+  font-weight: 700;
+}
+
+.sidebarItemLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sidebarItemIcon {
+  font-size: 1.1rem;
+}
+
+.sidebarBadge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: var(--admin-surface-alt);
+  color: var(--admin-text-muted);
+}
+
+.sidebarNavItemActive .sidebarBadge {
+  background: var(--admin-red-tint);
+  color: var(--admin-red);
+}
+
+/* Sidebar Footer */
+.sidebarFooter {
+  padding: var(--space-4);
+  border-top: 1px solid var(--admin-border);
+  background: var(--admin-surface-zebra);
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
 }
 
-.studentCountPill {
+.sidebarFooterMeta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
+
+.eliteBadge {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-1);
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  color: var(--admin-text-muted);
-  background: var(--admin-surface-alt);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
+  padding: 3px 8px;
+  background: var(--admin-surface);
   border: 1px solid var(--admin-border);
+  border-radius: var(--radius-full);
+}
+
+.eliteMiniLogo {
+  height: 16px;
+  width: 16px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.eliteBadgeText {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--admin-navy);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .logoutBtn {
-  background: transparent;
+  background: var(--admin-surface);
   color: var(--admin-text-muted);
   border: 1px solid var(--admin-border);
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-micro);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
+  width: 100%;
+  text-align: center;
 }
 
 .logoutBtn:hover {
@@ -272,35 +336,55 @@
   border-color: var(--admin-red-tint);
 }
 
-/* ── Navigation Tab Bar ─────────────────────────────────────────────────── */
-.navBar {
+/* ── Content View Area ───────────────────────────────────────────────────── */
+.mainWrapper {
+  flex: 1;
   display: flex;
-  gap: var(--space-1);
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--admin-bg);
+}
+
+.contentTopbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   background: var(--admin-surface);
   border-bottom: 1px solid var(--admin-border);
-  padding: 0 var(--space-6);
+  padding: var(--space-3) var(--space-6);
   flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
 }
 
-.navTab {
-  padding: var(--space-3) var(--space-4);
-  background: none;
-  border: none;
-  border-bottom: 3px solid transparent;
-  color: var(--admin-text-muted);
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
+.contentTopbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
-.navTab:hover {
+.contentPageTitle {
+  font-size: var(--font-size-card);
+  font-weight: 800;
   color: var(--admin-text-main);
+  letter-spacing: -0.01em;
 }
 
-.navTabActive {
-  color: var(--admin-red) !important;
-  border-bottom-color: var(--admin-red) !important;
+.contentTopbarRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.roundPill {
+  background: var(--admin-navy-subtle);
+  color: var(--admin-navy);
+  border: 1px solid var(--admin-navy-tint);
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 /* ── Main Scroll Area ────────────────────────────────────────────────────── */

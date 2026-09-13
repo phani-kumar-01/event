@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { useAuth } from '../state/AuthContext';
@@ -91,11 +91,30 @@ export default function DebuggingPage() {
 
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [activeConsoleTab, setActiveConsoleTab] = useState<'TESTS' | 'TERMINAL'>('TESTS');
   const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // 1-second interval to decrement cooldownRemaining
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+    const interval = setInterval(() => {
+      setCooldownRemaining((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [cooldownRemaining]);
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -261,12 +280,16 @@ export default function DebuggingPage() {
   // ── Problem status and progression rules ──────────────────────────────────
   function isProblemLocked(index: number): boolean {
     if (index === 0) return false;
-    const prevProblem = problems[index - 1];
-    if (!prevProblem) return true;
-    return !solvedProblemIds.has(prevProblem.id);
+    for (let i = 0; i < index; i++) {
+      const prevProb = problems[i];
+      if (prevProb && !solvedProblemIds.has(prevProb.id)) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  function getProblemStatus(index: number): 'SOLVED' | 'ACTIVE' | 'LOCKED' | 'UNLOCKED' {
+  function getProblemStatus(index: number): 'ACTIVE' | 'SOLVED' | 'UNLOCKED' | 'LOCKED' {
     const prob = problems[index];
     if (!prob) return 'LOCKED';
     if (solvedProblemIds.has(prob.id)) {
@@ -291,18 +314,30 @@ export default function DebuggingPage() {
 
   function handleCodeChange(newCode: string | undefined) {
     if (!currentProblem) return;
+    const codeVal = newCode || '';
     setCodeMap((prev) => ({
       ...prev,
-      [currentProblem.id]: newCode || '',
+      [currentProblem.id]: codeVal,
     }));
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    const pid = currentProblem.id;
+    const rollNo = user?.rollNo || 'guest';
+    saveTimeoutRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(`sasi_draft_${rollNo}_${pid}`, codeVal);
+      } catch {}
+    }, 500);
   }
 
   // ── Run Sample (Local Test Case Evaluation) ──────────────────────────────
   async function handleRunSample() {
-    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem) return;
+    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem || running || cooldownRemaining > 0) return;
     setRunning(true);
     setRunResult(null);
     setActiveConsoleTab('TESTS');
+    setCooldownRemaining(2);
 
     try {
       const res = await api.post<RunResult>('/debugging/execute', {
@@ -326,11 +361,12 @@ export default function DebuggingPage() {
 
   // ── Submit Solution (Both Sample + Hidden Test Cases) ────────────────────
   async function confirmAndSubmit() {
-    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem || submitting) return;
+    if (!event || (event.status !== 'RUNNING' && user?.role !== 'ADMIN') || !currentProblem || submitting || cooldownRemaining > 0) return;
     setSubmitting(true);
     setSubmitResult(null);
     setConfirmModalOpen(false);
     setActiveConsoleTab('TESTS');
+    setCooldownRemaining(3);
 
     try {
       const res = await api.post<{ success: boolean; message?: string; submission: SubmissionResult; nextProblemId?: string }>(
@@ -438,6 +474,9 @@ export default function DebuggingPage() {
               src={sasiLogo}
               alt="SASI Institute of Technology & Engineering"
               className={styles.headerLogo}
+              width={180}
+              height={36}
+              fetchPriority="high"
             />
             <span className={styles.brandSlash}>/</span>
             <span className={styles.brandSubtext}>C DEBUGGING ARENA</span>
@@ -563,6 +602,10 @@ export default function DebuggingPage() {
                     renderLineHighlight: 'all',
                     cursorBlinking: 'smooth',
                     tabSize: 2,
+                    folding: false,
+                    glyphMargin: false,
+                    quickSuggestions: false,
+                    renderValidationDecorations: 'off',
                   }}
                 />
               </div>
@@ -586,18 +629,26 @@ export default function DebuggingPage() {
                   <button
                     className={styles.runSampleBtn}
                     onClick={handleRunSample}
-                    disabled={!isEventRunning || running || submitting}
+                    disabled={!isEventRunning || running || submitting || cooldownRemaining > 0}
                     title="Test your code output against sample target"
                   >
-                    {running ? '▶ Running Sample...' : '▶ Run Sample'}
+                    {running
+                      ? '▶ Running...'
+                      : cooldownRemaining > 0
+                      ? `⏳ Cooldown (${cooldownRemaining}s)`
+                      : '▶ Run Sample'}
                   </button>
                   <button
                     className={styles.submitSolutionBtn}
                     onClick={() => setConfirmModalOpen(true)}
-                    disabled={!isEventRunning || submitting}
+                    disabled={!isEventRunning || submitting || cooldownRemaining > 0}
                     title="Evaluate code against hidden server test cases"
                   >
-                    {submitting ? 'Submitting...' : '✓ Submit Solution'}
+                    {submitting
+                      ? 'Submitting...'
+                      : cooldownRemaining > 0
+                      ? `⏳ Wait (${cooldownRemaining}s)`
+                      : '✓ Submit Solution'}
                   </button>
                   {isCurrentSolved && hasNextProblem && isNextUnlocked && (
                     <button

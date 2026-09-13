@@ -8,7 +8,9 @@ import ConnectionBadge from '../components/ConnectionBadge';
 import sasiLogo from '../assets/branding/sasi-logo.png';
 import eliteLogo from '../assets/branding/elite-logo.jpg';
 import styles from './AdminPage.module.css';
-import AdminLeaderboard from './admin/AdminLeaderboard';
+
+const AdminLeaderboard = React.lazy(() => import('./admin/AdminLeaderboard'));
+const AdminRunnerTest = React.lazy(() => import('./admin/AdminRunnerTest'));
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -89,10 +91,13 @@ interface Student {
   id: string;
   rollNo: string;
   name: string;
+  year?: string | null;
+  class?: string | null;
+  section?: string | null;
   createdAt: string;
 }
 
-type Tab = 'control_room' | 'leaderboard' | 'quiz_hub' | 'debugging' | 'students';
+type Tab = 'control_room' | 'leaderboard' | 'quiz_hub' | 'debugging' | 'students' | 'runner_test';
 type LeaderboardFilter = 'active' | 'round1' | 'round2' | 'final' | 'debugging';
 
 function getStageBadgeMeta(type: string): { icon: string; tintClass: string } {
@@ -142,7 +147,7 @@ function getRecommendedQuestions(type: string): { min: number; label: string } {
 }
 
 export default function AdminPage() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const connectionStatus = useConnectionStatus();
 
   // Navigation tab state
@@ -191,7 +196,31 @@ export default function AdminPage() {
   const [studentModal, setStudentModal] = useState<boolean>(false);
   const [studentImportStatus, setStudentImportStatus] = useState<string>('');
   const studentFileInputRef = useRef<HTMLInputElement>(null);
-  const [newStudent, setNewStudent] = useState({ rollNo: '', name: '', password: '' });
+  const [newStudent, setNewStudent] = useState({ rollNo: '', name: '', password: '', year: '', class: '', section: '' });
+
+  // Students pagination & search
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [studentPage, setStudentPage] = useState<number>(1);
+  const studentPageSize = 50;
+
+  const filteredStudents = useMemo(() => {
+    if (!studentSearch.trim()) return students;
+    const q = studentSearch.toLowerCase();
+    return students.filter(
+      (s) =>
+        s.rollNo.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q) ||
+        (s.year && s.year.toLowerCase().includes(q)) ||
+        (s.class && s.class.toLowerCase().includes(q)) ||
+        (s.section && s.section.toLowerCase().includes(q))
+    );
+  }, [students, studentSearch]);
+
+  const totalStudentPages = Math.max(1, Math.ceil(filteredStudents.length / studentPageSize));
+  const paginatedStudents = useMemo(() => {
+    const start = (studentPage - 1) * studentPageSize;
+    return filteredStudents.slice(start, start + studentPageSize);
+  }, [filteredStudents, studentPage, studentPageSize]);
 
   // ── 1. Load Events ─────────────────────────────────────────────────────────
   const loadEvents = useCallback(async () => {
@@ -314,8 +343,14 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadTabData();
-    api.get<{ students: Student[] }>('/admin/students').then((r) => setStudents(r.data.students)).catch(() => {});
-  }, [activeTab, loadTabData]);
+  }, [loadTabData]);
+
+  // Load students once on initial mount for sidebar badge
+  useEffect(() => {
+    api.get<{ students: Student[] }>('/admin/students')
+      .then((r) => setStudents(r.data.students))
+      .catch(() => {});
+  }, []);
 
   // ── 4. Unified Event Actions ───────────────────────────────────────────────
   async function handleEventAction(action: string, body?: Record<string, unknown>) {
@@ -669,10 +704,10 @@ export default function AdminPage() {
     try {
       await api.post('/admin/students', newStudent);
       setStudentModal(false);
-      setNewStudent({ rollNo: '', name: '', password: '' });
+      setNewStudent({ rollNo: '', name: '', password: '', year: '', class: '', section: '' });
       loadTabData();
-    } catch {
-      alert('Failed to add student');
+    } catch (err: any) {
+      alert(err?.response?.data?.error || 'Failed to add student');
     }
   }
 
@@ -919,109 +954,144 @@ export default function AdminPage() {
 
   return (
     <div className={styles.page}>
-      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
-      <header className={styles.topbar}>
-        <div className={styles.topbarLeft}>
+      {/* ── Side Navigation ──────────────────────────────────────────────── */}
+      <aside className={styles.sidebar}>
+        <div className={styles.sidebarTop}>
           <div className={styles.brandTitle}>
             <img
               src={sasiLogo}
               alt="SASI Institute of Technology & Engineering"
               className={styles.headerLogo}
+              width={160}
+              height={32}
+              fetchPriority="high"
             />
             <span className={styles.brandSlash}>/</span>
-            <span className={styles.brandSubtext}>CONTROL ROOM</span>
+            <span className={styles.brandSubtext}>ADMIN</span>
           </div>
+
+          {/* Quick Event Live Status Card */}
           {currentEvent && (
-            <>
-              <div
-                className={`${styles.liveEventPill} ${
-                  currentEvent.status === 'RUNNING' ? styles.liveEventPillActive : ''
-                }`}
-              >
-                {currentEvent.status === 'RUNNING' && <span className={styles.liveDot} />}
-                <span>
-                  {currentEvent.type === 'DEBUGGING' ? 'C Debugging Arena' : 'Technical Quiz'}
-                </span>
-                <span className={`${styles.commandStateBadge} ${styles[`badge${currentEvent.status}`]}`}>
+            <div className={styles.sidebarStatusCard}>
+              <div className={styles.sidebarStatusHeader}>
+                <div
+                  className={`${styles.liveEventPill} ${
+                    currentEvent.status === 'RUNNING' ? styles.liveEventPillActive : ''
+                  }`}
+                >
+                  {currentEvent.status === 'RUNNING' && <span className={styles.liveDot} />}
+                  <span>{currentEvent.type === 'DEBUGGING' ? 'Debugging' : 'Tech Quiz'}</span>
+                </div>
+                <span className={`${styles.commandStateBadge} ${styles[`badge${currentEvent.status}`]}`} style={{ fontSize: '10px', padding: '2px 6px' }}>
                   {currentEvent.status}
                 </span>
               </div>
-              {isQuiz && (
-                <span className={styles.roundPill}>
-                  {currentEvent.currentRound === 2 ? 'Round 2: Championship' : 'Round 1: Qualifiers'}
+              <div className={styles.sidebarTimerRow}>
+                <span className={styles.timerLabel}>Timer</span>
+                <span
+                  className={`${styles.timerValue} ${
+                    isLiveRunning && timerRemaining < 300 ? styles.timerValueUrgent : ''
+                  }`}
+                >
+                  {isLiveRunning
+                    ? timerFormatted
+                    : `${Math.floor((currentEvent?.durationSeconds || 1800) / 60)}:00`}
                 </span>
+              </div>
+              {isQuiz && (
+                <div className={styles.roundPill} style={{ textAlign: 'center', fontSize: '10px' }}>
+                  {currentEvent.currentRound === 2 ? 'Round 2: Championship' : 'Round 1: Qualifiers'}
+                </div>
               )}
-            </>
+            </div>
           )}
+
+          {/* Nav List */}
+          <nav className={styles.sidebarNav}>
+            {[
+              { id: 'control_room', label: 'Control Room', icon: '🎛️' },
+              { id: 'leaderboard', label: 'Live Leaderboard', icon: '🏆' },
+              { id: 'quiz_hub', label: 'Quiz Management', icon: '⚡' },
+              { id: 'debugging', label: 'Debugging Arena', icon: '🛠️' },
+              { id: 'students', label: 'Students Roster', icon: '👥', badge: students.length },
+              { id: 'runner_test', label: 'C Runner Test', icon: '⚡' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                className={`${styles.sidebarNavItem} ${activeTab === tab.id ? styles.sidebarNavItemActive : ''}`}
+                onClick={() => setActiveTab(tab.id as Tab)}
+              >
+                <div className={styles.sidebarItemLeft}>
+                  <span className={styles.sidebarItemIcon}>{tab.icon}</span>
+                  <span>{tab.label}</span>
+                </div>
+                {tab.badge !== undefined && (
+                  <span className={styles.sidebarBadge}>{tab.badge}</span>
+                )}
+              </button>
+            ))}
+          </nav>
         </div>
 
-        <div className={styles.topbarCenter}>
-          <div className={styles.timerBlock}>
-            <span className={styles.timerLabel}>Time:</span>
-            <span
-              className={`${styles.timerValue} ${
-                isLiveRunning && timerRemaining < 300 ? styles.timerValueUrgent : ''
-              }`}
-            >
-              {isLiveRunning
-                ? timerFormatted
-                : `${Math.floor((currentEvent?.durationSeconds || 1800) / 60)}:00`}
-            </span>
-          </div>
-        </div>
-
-        <div className={styles.topbarRight}>
-          <div className={styles.eliteBadge} title="Organized by ELITE — Department of Information Technology">
-            <img src={eliteLogo} alt="ELITE Club" className={styles.eliteMiniLogo} />
-            <span className={styles.eliteBadgeText}>ELITE IT</span>
-          </div>
-          <div className={styles.studentCountPill}>
+        {/* Sidebar Footer */}
+        <div className={styles.sidebarFooter}>
+          <div className={styles.sidebarFooterMeta}>
+            <div className={styles.eliteBadge} title="Organized by ELITE — Department of Information Technology">
+              <img src={eliteLogo} alt="ELITE Club" className={styles.eliteMiniLogo} width={20} height={20} loading="lazy" decoding="async" />
+              <span className={styles.eliteBadgeText}>ELITE IT</span>
+            </div>
             <ConnectionBadge status={connectionStatus} />
-            <span>{students.length} Students</span>
           </div>
           <button className={styles.logoutBtn} onClick={logout}>
-            Logout
+            🚪 Logout ({user?.rollNo || 'Admin'})
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* ── Nav Tabs ─────────────────────────────────────────────────────── */}
-      <nav className={styles.navBar}>
-        {[
-          { id: 'control_room', label: 'Control Room' },
-          { id: 'leaderboard', label: 'Live Leaderboard' },
-          { id: 'quiz_hub', label: 'Quiz Management' },
-          { id: 'debugging', label: 'Debugging Arena' },
-          { id: 'students', label: 'Students' },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            className={`${styles.navTab} ${activeTab === tab.id ? styles.navTabActive : ''}`}
-            onClick={() => setActiveTab(tab.id as Tab)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* ── Main View Area ───────────────────────────────────────────────── */}
-      <main className={styles.mainContent}>
-        {actionError && (
-          <div className={styles.alertError}>
-            <span>{actionError}</span>
-            <button className={styles.alertCloseBtn} onClick={() => setActionError('')}>
-              ×
+      {/* ── Main Content Area ────────────────────────────────────────────── */}
+      <div className={styles.mainWrapper}>
+        <header className={styles.contentTopbar}>
+          <div className={styles.contentTopbarLeft}>
+            <span className={styles.contentPageTitle}>
+              {activeTab === 'control_room' && '🎛️ Live Event Control Room'}
+              {activeTab === 'leaderboard' && '🏆 Real-time Tournament Leaderboard'}
+              {activeTab === 'quiz_hub' && '⚡ Technical Quiz Stage & Question Hub'}
+              {activeTab === 'debugging' && '🛠️ C Debugging Problems & Sandbox'}
+              {activeTab === 'students' && '👥 Registered Students Directory'}
+            </span>
+          </div>
+          <div className={styles.contentTopbarRight}>
+            <button
+              className={styles.btnSecondary}
+              style={{ padding: '4px 12px', fontSize: '12px' }}
+              onClick={() => {
+                loadEvents();
+                loadTabData();
+              }}
+            >
+              🔄 Refresh
             </button>
           </div>
-        )}
-        {actionSuccess && (
-          <div className={styles.alertSuccess}>
-            <span>{actionSuccess}</span>
-            <button className={styles.alertCloseBtn} onClick={() => setActionSuccess('')}>
-              ×
-            </button>
-          </div>
-        )}
+        </header>
+
+        {/* ── Main Scroll View Area ────────────────────────────────────────── */}
+        <main className={styles.mainContent}>
+          {actionError && (
+            <div className={styles.alertError}>
+              <span>{actionError}</span>
+              <button className={styles.alertCloseBtn} onClick={() => setActionError('')}>
+                ×
+              </button>
+            </div>
+          )}
+          {actionSuccess && (
+            <div className={styles.alertSuccess}>
+              <span>{actionSuccess}</span>
+              <button className={styles.alertCloseBtn} onClick={() => setActionSuccess('')}>
+                ×
+              </button>
+            </div>
+          )}
 
         {/* ── TAB 1: CONTROL ROOM ─────────────────────────────────────────── */}
         {activeTab === 'control_room' && (
@@ -1159,7 +1229,11 @@ export default function AdminPage() {
         )}
 
         {/* ── TAB 2: FULL LEADERBOARD ────────────────────────────────────── */}
-        {activeTab === 'leaderboard' && <AdminLeaderboard />}
+        {activeTab === 'leaderboard' && (
+          <React.Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>Loading tournament leaderboard...</div>}>
+            <AdminLeaderboard />
+          </React.Suspense>
+        )}
 
         {/* ── TAB 3: QUIZ MANAGEMENT ───────────────────────────────────────── */}
         {activeTab === 'quiz_hub' && (
@@ -1554,52 +1628,117 @@ export default function AdminPage() {
               </div>
             </div>
 
+            <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                className={styles.input}
+                placeholder="🔍 Search by Roll No, Name, Year, Branch, or Section..."
+                value={studentSearch}
+                onChange={(e) => {
+                  setStudentSearch(e.target.value);
+                  setStudentPage(1);
+                }}
+                style={{ maxWidth: '400px', padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
+              />
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                Showing {filteredStudents.length > 0 ? (studentPage - 1) * studentPageSize + 1 : 0}–{Math.min(studentPage * studentPageSize, filteredStudents.length)} of {filteredStudents.length} students
+              </span>
+            </div>
+
             <div className={styles.tableWrapper}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th style={{ width: '60px' }}>#</th>
+                    <th style={{ width: '50px' }}>#</th>
                     <th>Roll No</th>
                     <th>Name</th>
+                    <th>Year</th>
+                    <th>Class / Branch</th>
+                    <th>Section</th>
                     <th>Registration Date</th>
                     <th style={{ width: '100px' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((s, idx) => (
-                    <tr key={s.id}>
-                      <td>{idx + 1}</td>
-                      <td>
-                        <code>{s.rollNo}</code>
-                      </td>
-                      <td>
-                        <strong>{s.name}</strong>
-                      </td>
-                      <td>{new Date(s.createdAt).toLocaleDateString()}</td>
-                      <td>
-                        <button
-                          className={styles.btnDangerOutline}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
-                          onClick={() => deleteStudent(s.id)}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {students.length === 0 && (
+                  {paginatedStudents.map((s, idx) => {
+                    const rowNum = (studentPage - 1) * studentPageSize + idx + 1;
+                    return (
+                      <tr key={s.id}>
+                        <td>{rowNum}</td>
+                        <td>
+                          <code>{s.rollNo}</code>
+                        </td>
+                        <td>
+                          <strong>{s.name}</strong>
+                        </td>
+                        <td>
+                          {s.year ? <span className={styles.badgeTintAmber} style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>{s.year}</span> : <span style={{ opacity: 0.5 }}>—</span>}
+                        </td>
+                        <td>
+                          {s.class ? <span className={styles.badgeTintBlue} style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>{s.class}</span> : <span style={{ opacity: 0.5 }}>—</span>}
+                        </td>
+                        <td>
+                          {s.section ? <span className={styles.badgeTintPurple} style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700 }}>Sec {s.section}</span> : <span style={{ opacity: 0.5 }}>—</span>}
+                        </td>
+                        <td>{new Date(s.createdAt).toLocaleDateString()}</td>
+                        <td>
+                          <button
+                            className={styles.btnDangerOutline}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: 'var(--font-size-micro)' }}
+                            onClick={() => deleteStudent(s.id)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredStudents.length === 0 && (
                     <tr>
-                      <td colSpan={5} className={styles.emptyState}>
-                        No students enrolled yet.
+                      <td colSpan={8} className={styles.emptyState}>
+                        {students.length === 0 ? 'No students enrolled yet.' : 'No students match your search filter.'}
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+
+            {totalStudentPages > 1 && (
+              <div style={{ padding: '0.75rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--color-border)' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                  Page {studentPage} of {totalStudentPages} ({filteredStudents.length} total students)
+                </span>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    className={styles.btnSecondary}
+                    disabled={studentPage <= 1}
+                    onClick={() => setStudentPage((p) => Math.max(1, p - 1))}
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
+                  >
+                    ← Previous
+                  </button>
+                  <button
+                    className={styles.btnSecondary}
+                    disabled={studentPage >= totalStudentPages}
+                    onClick={() => setStudentPage((p) => Math.min(totalStudentPages, p + 1))}
+                    style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+
+        {activeTab === 'runner_test' && (
+          <React.Suspense fallback={<div className={styles.loadingContainer}>Loading C Runner Test Hub...</div>}>
+            <AdminRunnerTest />
+          </React.Suspense>
+        )}
       </main>
+    </div>
 
       {/* ── QUALIFY TOP 10 CONFIRMATION MODAL ──────────────────────────────── */}
       {qualifyModalOpen && (
@@ -2366,6 +2505,39 @@ export default function AdminPage() {
                     value={newStudent.password}
                     onChange={(e) =>
                       setNewStudent((p) => ({ ...p, password: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Year</span>
+                  <input
+                    className={styles.input}
+                    value={newStudent.year}
+                    placeholder="e.g. II / III / IV"
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, year: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <span className={styles.formLabel}>Class / Branch</span>
+                  <input
+                    className={styles.input}
+                    value={newStudent.class}
+                    placeholder="e.g. B.Tech IT"
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, class: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className={styles.formGroupFull}>
+                  <span className={styles.formLabel}>Section</span>
+                  <input
+                    className={styles.input}
+                    value={newStudent.section}
+                    placeholder="e.g. A, B, C"
+                    onChange={(e) =>
+                      setNewStudent((p) => ({ ...p, section: e.target.value.toUpperCase() }))
                     }
                   />
                 </div>

@@ -98,6 +98,9 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
               src={sasiLogo}
               alt="SASI Institute of Technology & Engineering"
               className={styles.sasiLogo}
+              width={224}
+              height={40}
+              fetchPriority="high"
             />
           </div>
           <h1 className={styles.title}>Engineers' Day 2026</h1>
@@ -117,7 +120,7 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
               className={styles.input}
               value={rollNo}
               onChange={(e) => setRollNo(e.target.value)}
-              placeholder="e.g. CS001"
+              placeholder="Enter Roll Number"
               required
               autoFocus
               autoCapitalize="characters"
@@ -150,6 +153,10 @@ export default function LoginPage({ adminOnly = false }: { adminOnly?: boolean }
           src={eliteLogo}
           alt="ELITE - Dept of Information Technology"
           className={styles.eliteLogo}
+          width={28}
+          height={28}
+          loading="lazy"
+          decoding="async"
         />
         <div className={styles.creditText}>
           <span>Organized by <strong>ELITE</strong></span>

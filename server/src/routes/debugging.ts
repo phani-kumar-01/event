@@ -1,15 +1,20 @@
 import { Router, Response } from 'express';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import { executeDebuggingCode } from '../controllers/debuggingController';
-import prisma from '../utils/prisma';
+import prisma, { withDbRetry } from '../utils/prisma';
 
 const router = Router();
 
-// GET /api/debugging/progress
-router.get('/progress', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.userId;
-    const event = await prisma.event.findFirst({
+let cachedDebuggingEvent: any = null;
+let lastDebuggingEventFetch = 0;
+
+async function getCachedDebuggingEvent() {
+  const now = Date.now();
+  if (cachedDebuggingEvent && now - lastDebuggingEventFetch < 5000) {
+    return cachedDebuggingEvent;
+  }
+  const event = await withDbRetry(() =>
+    prisma.event.findFirst({
       where: { type: 'DEBUGGING' },
       include: {
         debuggingProblems: {
@@ -17,7 +22,20 @@ router.get('/progress', requireAuth, async (req: AuthRequest, res: Response): Pr
           select: { id: true, title: true, points: true, order: true },
         },
       },
-    });
+    })
+  );
+  if (event) {
+    cachedDebuggingEvent = event;
+    lastDebuggingEventFetch = now;
+  }
+  return event;
+}
+
+// GET /api/debugging/progress
+router.get('/progress', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+    const event = await getCachedDebuggingEvent();
 
     if (!event) {
       res.json({
@@ -31,14 +49,16 @@ router.get('/progress', requireAuth, async (req: AuthRequest, res: Response): Pr
       return;
     }
 
-    const submissions = await prisma.submission.findMany({
-      where: {
-        userId,
-        eventId: event.id,
-        result: 'ACCEPTED',
-      },
-      select: { problemId: true, pointsAwarded: true },
-    });
+    const submissions = await withDbRetry(() =>
+      prisma.submission.findMany({
+        where: {
+          userId,
+          eventId: event.id,
+          result: 'ACCEPTED',
+        },
+        select: { problemId: true, pointsAwarded: true },
+      })
+    );
 
     const solvedSet = new Set(submissions.map((s) => s.problemId));
     const totalPoints = submissions.reduce((sum, s) => sum + s.pointsAwarded, 0);

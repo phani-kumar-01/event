@@ -1,16 +1,121 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import prisma from '../utils/prisma';
+import prisma, { withDbRetry } from '../utils/prisma';
 import { AuthRequest } from '../middleware/auth';
-import { evaluateCWithTestCases, TestCase, TestCaseEvaluation, normalizeOutput } from '../services/cRunner';
+import { evaluateCWithTestCases, TestCase, TestCaseEvaluation, normalizeOutput, checkUserExecutionRateLimit } from '../services/cRunner';
 import { detectHardcodingTricks } from '../services/executionService';
 
 const executeSchema = z.object({
   problemId: z.union([z.string(), z.number()]),
-  sourceCode: z.string().optional(),
-  code: z.string().optional(),
+  sourceCode: z.string().max(65536, 'Source code exceeds maximum 64KB size limit.').optional(),
+  code: z.string().max(65536, 'Source code exceeds maximum 64KB size limit.').optional(),
+  input: z.string().max(16384, 'Input data exceeds maximum 16KB limit.').optional(),
   mode: z.enum(['RUN', 'SUBMIT']).default('RUN'),
 });
+
+// Single-in-flight submission guard per user to prevent duplicate concurrent submissions
+const inFlightSubmissions = new Set<string>();
+
+// In-memory problem cache to prevent DB pounding under 120-student load
+const problemCache = new Map<string, { problem: any; timestamp: number }>();
+
+// In-memory user cache to prevent DB pounding under 120-student load
+const userCache = new Map<string, { user: any; timestamp: number }>();
+
+async function getCachedUser(userId: string) {
+  const now = Date.now();
+  const cached = userCache.get(userId);
+  if (cached && now - cached.timestamp < 60000) {
+    return cached.user;
+  }
+  const user = await withDbRetry(() =>
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, rollNo: true, name: true, role: true },
+    })
+  );
+  if (user) {
+    userCache.set(userId, { user, timestamp: now });
+  }
+  return user;
+}
+
+async function saveOrUpdateSubmission(params: {
+  userId: string;
+  eventId: string;
+  problemId: string;
+  submittedCode: string;
+  result: 'ACCEPTED' | 'WRONG_ANSWER' | 'COMPILE_ERROR' | 'RUNTIME_ERROR' | 'TIME_LIMIT_EXCEEDED';
+  compileOutput: string;
+  runOutput: string;
+  pointsAwarded: number;
+}) {
+  return withDbRetry(async () => {
+    const existing = await prisma.submission.findFirst({
+      where: { userId: params.userId, problemId: params.problemId },
+    });
+
+    if (existing) {
+      const isAlreadyAccepted = existing.result === 'ACCEPTED';
+      return prisma.submission.update({
+        where: { id: existing.id },
+        data: {
+          submittedCode: params.submittedCode,
+          result: isAlreadyAccepted ? 'ACCEPTED' : params.result,
+          compileOutput: params.compileOutput,
+          runOutput: params.runOutput,
+          pointsAwarded: Math.max(existing.pointsAwarded, params.pointsAwarded),
+          submittedAt: new Date(),
+        },
+      });
+    } else {
+      return prisma.submission.create({
+        data: {
+          userId: params.userId,
+          eventId: params.eventId,
+          problemId: params.problemId,
+          submittedCode: params.submittedCode,
+          result: params.result,
+          compileOutput: params.compileOutput,
+          runOutput: params.runOutput,
+          pointsAwarded: params.pointsAwarded,
+        },
+      });
+    }
+  });
+}
+
+async function findProblem(problemId: string | number) {
+  const cacheKey = String(problemId);
+  const now = Date.now();
+  const cached = problemCache.get(cacheKey);
+  if (cached && now - cached.timestamp < 15000) {
+    return cached.problem;
+  }
+
+  const idStr = String(problemId);
+  let problem = await withDbRetry(() =>
+    prisma.debuggingProblem.findUnique({
+      where: { id: idStr },
+      include: { event: true },
+    })
+  );
+
+  if (!problem && !isNaN(Number(problemId))) {
+    problem = await withDbRetry(() =>
+      prisma.debuggingProblem.findFirst({
+        where: { order: Number(problemId) },
+        include: { event: true },
+      })
+    );
+  }
+
+  if (problem) {
+    problemCache.set(cacheKey, { problem, timestamp: now });
+  }
+
+  return problem;
+}
 
 /**
  * Extract parsed test cases from problem fields
@@ -61,26 +166,6 @@ function parseProblemTestCases(problem: {
 }
 
 /**
- * Find problem by string ID or numeric order
- */
-async function findProblem(problemId: string | number) {
-  const idStr = String(problemId);
-  let problem = await prisma.debuggingProblem.findUnique({
-    where: { id: idStr },
-    include: { event: true },
-  });
-
-  if (!problem && !isNaN(Number(problemId))) {
-    problem = await prisma.debuggingProblem.findFirst({
-      where: { order: Number(problemId) },
-      include: { event: true },
-    });
-  }
-
-  return problem;
-}
-
-/**
  * Sanitize test case results so hidden inputs and outputs are never exposed to the client
  */
 function sanitizeTestCases(results: TestCaseEvaluation[]): TestCaseEvaluation[] {
@@ -110,10 +195,22 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       return;
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, rollNo: true, name: true, role: true },
-    });
+    // Rate Limiting Check (2.0s for SUBMIT, 1.5s for RUN)
+    const modeParam = req.body.mode === 'SUBMIT' ? 'SUBMIT' : 'RUN';
+    if (req.user?.role !== 'ADMIN') {
+      const rateLimit = checkUserExecutionRateLimit(userId, modeParam === 'SUBMIT' ? 2000 : 1500);
+      if (!rateLimit.allowed) {
+        const secs = (rateLimit.remainingCooldownMs / 1000).toFixed(1);
+        res.status(429).json({
+          success: false,
+          error: `Cooldown active: Please wait ${secs}s before ${modeParam.toLowerCase()}ning again.`,
+          cooldownRemainingMs: rateLimit.remainingCooldownMs,
+        });
+        return;
+      }
+    }
+
+    const user = await getCachedUser(userId);
 
     if (!user) {
       res.status(401).json({ success: false, error: 'Unauthorized: User account not found in database.' });
@@ -167,6 +264,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           output: evalResult.securityViolation,
           testCases: sanitizeTestCases(evalResult.results),
           timeMs: 0,
+          metrics: evalResult.metrics,
         });
         return;
       }
@@ -180,6 +278,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           error: `Compilation Error: ${evalResult.compileError}`,
           testCases: [],
           timeMs: 0,
+          metrics: evalResult.metrics,
         });
         return;
       }
@@ -195,45 +294,36 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
         testCases: sanitizeTestCases(evalResult.results),
         timeMs: totalTimeMs,
         expected: sampleCases[0]?.expectedOutput || problem.expectedOutput,
+        metrics: evalResult.metrics,
       });
       return;
     }
 
     // ── 2. MODE: SUBMIT (Sample + Hidden test cases with Scoring & Sockets) ────
-    const antiCheat = detectHardcodingTricks(sourceCode, sampleCases, hiddenCases);
+    if (inFlightSubmissions.has(userId)) {
+      res.status(429).json({
+        success: false,
+        error: 'Another submission is currently being processed. Please wait for the result.',
+      });
+      return;
+    }
+    inFlightSubmissions.add(userId);
+
+    try {
+      const antiCheat = detectHardcodingTricks(sourceCode, sampleCases, hiddenCases);
     if (antiCheat.isCheat) {
       const totalCases = sampleCases.length + hiddenCases.length;
 
-      const existingSubmission = await prisma.submission.findFirst({
-        where: { userId, problemId: problem.id },
+      const submission = await saveOrUpdateSubmission({
+        userId,
+        eventId: event.id,
+        problemId: problem.id,
+        submittedCode: sourceCode,
+        result: 'WRONG_ANSWER',
+        compileOutput: '',
+        runOutput: `Validation Flag: ${antiCheat.reason}`,
+        pointsAwarded: 0,
       });
-
-      let submission;
-      if (existingSubmission) {
-        submission = await prisma.submission.update({
-          where: { id: existingSubmission.id },
-          data: {
-            submittedCode: sourceCode,
-            result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'WRONG_ANSWER',
-            compileOutput: '',
-            runOutput: `Validation Flag: ${antiCheat.reason}`,
-            submittedAt: new Date(),
-          },
-        });
-      } else {
-        submission = await prisma.submission.create({
-          data: {
-            userId,
-            eventId: event.id,
-            problemId: problem.id,
-            submittedCode: sourceCode,
-            result: 'WRONG_ANSWER',
-            compileOutput: '',
-            runOutput: `Validation Flag: ${antiCheat.reason}`,
-            pointsAwarded: 0,
-          },
-        });
-      }
 
       res.status(400).json({
         success: false,
@@ -264,33 +354,16 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
     const sampleEval = await evaluateCWithTestCases(sourceCode, sampleCases, 'SAMPLE', timeoutMs);
 
     if (sampleEval.securityViolation) {
-      const existingSubmission = await prisma.submission.findFirst({
-        where: { userId, problemId: problem.id },
+      const submission = await saveOrUpdateSubmission({
+        userId,
+        eventId: event.id,
+        problemId: problem.id,
+        submittedCode: sourceCode,
+        result: 'RUNTIME_ERROR',
+        compileOutput: '',
+        runOutput: sampleEval.securityViolation,
+        pointsAwarded: 0,
       });
-
-      const submission = existingSubmission
-        ? await prisma.submission.update({
-            where: { id: existingSubmission.id },
-            data: {
-              submittedCode: sourceCode,
-              result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'RUNTIME_ERROR',
-              compileOutput: '',
-              runOutput: sampleEval.securityViolation,
-              submittedAt: new Date(),
-            },
-          })
-        : await prisma.submission.create({
-            data: {
-              userId,
-              eventId: event.id,
-              problemId: problem.id,
-              submittedCode: sourceCode,
-              result: 'RUNTIME_ERROR',
-              compileOutput: '',
-              runOutput: sampleEval.securityViolation,
-              pointsAwarded: 0,
-            },
-          });
 
       res.status(400).json({
         success: false,
@@ -311,33 +384,16 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
     }
 
     if (sampleEval.compileError) {
-      const existingSubmission = await prisma.submission.findFirst({
-        where: { userId, problemId: problem.id },
+      const submission = await saveOrUpdateSubmission({
+        userId,
+        eventId: event.id,
+        problemId: problem.id,
+        submittedCode: sourceCode,
+        result: 'COMPILE_ERROR',
+        compileOutput: sampleEval.compileError,
+        runOutput: '',
+        pointsAwarded: 0,
       });
-
-      const submission = existingSubmission
-        ? await prisma.submission.update({
-            where: { id: existingSubmission.id },
-            data: {
-              submittedCode: sourceCode,
-              result: existingSubmission.result === 'ACCEPTED' ? 'ACCEPTED' : 'COMPILE_ERROR',
-              compileOutput: sampleEval.compileError,
-              runOutput: '',
-              submittedAt: new Date(),
-            },
-          })
-        : await prisma.submission.create({
-            data: {
-              userId,
-              eventId: event.id,
-              problemId: problem.id,
-              submittedCode: sourceCode,
-              result: 'COMPILE_ERROR',
-              compileOutput: sampleEval.compileError,
-              runOutput: '',
-              pointsAwarded: 0,
-            },
-          });
 
       res.status(400).json({
         success: false,
@@ -398,47 +454,25 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       }
     }
 
-    const existingSubmission = await prisma.submission.findFirst({
-      where: { userId, problemId: problem.id },
+    const submission = await saveOrUpdateSubmission({
+      userId,
+      eventId: event.id,
+      problemId: problem.id,
+      submittedCode: sourceCode,
+      result: isAccepted ? 'ACCEPTED' : worstVerdict,
+      compileOutput: '',
+      runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
+      pointsAwarded: isAccepted ? problem.points : 0,
     });
-
-    const isAlreadyAccepted = existingSubmission?.result === 'ACCEPTED';
-    const pointsAwarded = isAccepted ? problem.points : (isAlreadyAccepted ? existingSubmission.pointsAwarded : 0);
-
-    let submission;
-    if (existingSubmission) {
-      submission = await prisma.submission.update({
-        where: { id: existingSubmission.id },
-        data: {
-          submittedCode: sourceCode,
-          result: isAccepted ? 'ACCEPTED' : (isAlreadyAccepted ? 'ACCEPTED' : worstVerdict),
-          compileOutput: '',
-          runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
-          pointsAwarded: Math.max(existingSubmission.pointsAwarded, pointsAwarded),
-          submittedAt: new Date(),
-        },
-      });
-    } else {
-      submission = await prisma.submission.create({
-        data: {
-          userId,
-          eventId: event.id,
-          problemId: problem.id,
-          submittedCode: sourceCode,
-          result: isAccepted ? 'ACCEPTED' : worstVerdict,
-          compileOutput: '',
-          runOutput: isAccepted ? 'All test cases passed successfully!' : `${passedCases}/${totalCases} test cases passed`,
-          pointsAwarded,
-        },
-      });
-    }
 
     let nextProblem = null;
     if (isAccepted) {
-      nextProblem = await prisma.debuggingProblem.findFirst({
-        where: { eventId: event.id, order: { gt: problem.order } },
-        orderBy: { order: 'asc' },
-      });
+      nextProblem = await withDbRetry(() =>
+        prisma.debuggingProblem.findFirst({
+          where: { eventId: event.id, order: { gt: problem.order } },
+          orderBy: { order: 'asc' },
+        })
+      );
 
       // Emit Socket.IO events for live leaderboard & instant unlock
       const io = req.app.get('io');
@@ -467,6 +501,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       res.status(400).json({
         success: false,
         error: errorMessage || 'Output mismatch or execution error.',
+        metrics: sampleEval.metrics,
         submission: {
           id: submission.id,
           result: submission.result,
@@ -477,6 +512,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
           totalCases,
           testCases: sanitizedResults,
           submittedAt: submission.submittedAt.toISOString(),
+          metrics: sampleEval.metrics,
         },
       });
       return;
@@ -487,6 +523,7 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
       message: 'Solution accepted!',
       nextProblemId: nextProblem?.id,
       nextProblemOrder: nextProblem?.order,
+      metrics: sampleEval.metrics,
       submission: {
         id: submission.id,
         result: submission.result,
@@ -498,8 +535,12 @@ export async function executeDebuggingCode(req: AuthRequest, res: Response): Pro
         testCases: sanitizedResults,
         nextProblemId: nextProblem?.id,
         submittedAt: submission.submittedAt.toISOString(),
+        metrics: sampleEval.metrics,
       },
     });
+    } finally {
+      inFlightSubmissions.delete(userId);
+    }
   } catch (error) {
     console.error('Debugging Submission Error:', error);
     res.status(500).json({

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import prisma from '../utils/prisma';
 import { signToken } from '../utils/jwt';
+import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const router = Router();
 
@@ -46,11 +47,34 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction): P
         rollNo: user.rollNo,
         name: user.name,
         role: user.role,
+        year: user.year,
+        class: user.class,
+        section: user.section,
       },
     });
   } catch (error) {
     next(error);
   }
+});
+
+router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user!.userId },
+      select: { id: true, rollNo: true, name: true, role: true, year: true, class: true, section: true },
+    });
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/logout', (_req: Request, res: Response): void => {
+  res.json({ success: true });
 });
 
 export default router;

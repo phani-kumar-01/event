@@ -85,7 +85,7 @@ Ensure `server/.env` contains:
 ```env
 PORT=3001
 JWT_SECRET="sasi-engineers-day-super-secret-key-2026"
-DATABASE_URL="file:/home/candy/deb/prisma/sasi-engineers-day.db"
+DATABASE_URL="postgresql://postgres.tgvrdyqlkwyuhaqpbksa:JFBtKuYrdh9PxIwN@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres"
 CLIENT_ORIGIN="http://localhost:5173"
 ADMIN_ORIGIN="http://localhost:5174"
 ```
@@ -101,8 +101,7 @@ cd ..
 
 ### 4. Initialize Database & Seed Sample Data
 ```bash
-cd server
-# Push Prisma schema to SQLite
+# Push Prisma schema to Supabase cloud PostgreSQL
 npx prisma db push
 
 # Seed default admin, student accounts, sample events, problems & questions

@@ -36,3 +36,9 @@ Thumbs.db
 .idea/
 apps/
 backend/
+scratch/
+*.xlsx
+.agents/
+.claude/
+agent/
+skills-lock.json

@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
-import prisma from '../utils/prisma';
+import prisma, { withDbRetry } from '../utils/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
 import {
   getCurrentEvent,
@@ -17,16 +17,29 @@ import {
 
 const router = Router();
 
+const studentProfileCache = new Map<string, { user: any; timestamp: number }>();
+
 // ─── GET /api/me ─────────────────────────────────────────────────────────────
 router.get('/me', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
-  const user = await prisma.user.findUnique({
-    where: { id: req.user!.userId },
-    select: { id: true, rollNo: true, name: true, role: true },
-  });
+  const userId = req.user!.userId;
+  const now = Date.now();
+  const cached = studentProfileCache.get(userId);
+  if (cached && now - cached.timestamp < 60000) {
+    res.json({ user: cached.user });
+    return;
+  }
+
+  const user = await withDbRetry(() =>
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, rollNo: true, name: true, role: true },
+    })
+  );
   if (!user) {
     res.status(404).json({ error: 'User not found' });
     return;
   }
+  studentProfileCache.set(userId, { user, timestamp: now });
   res.json({ user });
 });
 

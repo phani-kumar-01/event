@@ -136,6 +136,9 @@ export default function WaitingPage() {
             src={sasiLogo}
             alt="SASI Institute of Technology & Engineering"
             className={styles.headerLogo}
+            width={180}
+            height={36}
+            fetchPriority="high"
           />
           {event && (
             <span className={styles.eventBadge}>
@@ -252,6 +255,10 @@ export default function WaitingPage() {
           src={eliteLogo}
           alt="ELITE - Dept of Information Technology"
           className={styles.eliteLogo}
+          width={28}
+          height={28}
+          loading="lazy"
+          decoding="async"
         />
         <div className={styles.creditText}>
           <span>Organized by <strong>ELITE</strong></span>
