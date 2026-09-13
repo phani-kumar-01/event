@@ -164,6 +164,7 @@ export function emitEventStateChanged(
 
   io.to(`event:${event.id}`).emit('event.state_changed', payload);
   io.to('admin').emit('event.state_changed', payload);
+  io.emit('event.state_changed', payload);
 }
 
 /**

@@ -361,6 +361,26 @@ export default function AdminPage() {
   async function handleEventAction(action: string, body?: Record<string, unknown>, targetEventId?: string) {
     const eventId = targetEventId || currentEvent?.id;
     if (!eventId) return;
+
+    // Strict Rule: ONLY ONE EVENT CAN RUN AT A TIME
+    const isStartingOrResuming =
+      action === 'start' ||
+      action === 'resume' ||
+      action === 'start-round1' ||
+      action === 'resume-round1' ||
+      action === 'start-round2' ||
+      action === 'resume-round2';
+
+    if (isStartingOrResuming) {
+      const otherRunning = events.find((e) => e.id !== eventId && e.status === 'RUNNING');
+      if (otherRunning) {
+        const proceed = confirm(
+          `⚠️ STRICT RULE: Only ONE event can run at a time.\n\n"${otherRunning.name}" is currently RUNNING.\nStarting this event will automatically PAUSE "${otherRunning.name}".\n\nDo you want to proceed?`
+        );
+        if (!proceed) return;
+      }
+    }
+
     setActionError('');
     setActionSuccess('');
     setActionLoading(true);
@@ -1070,6 +1090,9 @@ export default function AdminPage() {
             </span>
           </div>
           <div className={styles.contentTopbarRight}>
+            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 600, padding: '3px 7px', background: '#f1f5f9', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+              1 Event Live Max
+            </span>
             <div className={styles.eventToggleGroup}>
               {debugEvent && (
                 <button
@@ -1198,7 +1221,20 @@ export default function AdminPage() {
                   </span>
                 </div>
 
-                <div>{renderSingleActionGroup()}</div>
+                <div>
+                  {renderSingleActionGroup()}
+                  {(() => {
+                    const other = events.find((e) => e.id !== currentEvent?.id && e.status === 'RUNNING');
+                    if (other && (currentEvent?.status === 'READY' || currentEvent?.status === 'PAUSED')) {
+                      return (
+                        <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#b45309', background: '#fef3c7', padding: '4px 8px', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                          ⚠️ "{other.name}" is currently LIVE. Starting or resuming will automatically pause it.
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
               </div>
             </div>
 
@@ -1322,6 +1358,12 @@ export default function AdminPage() {
                     Duration: {Math.floor((quizEvent?.round1Duration || 1800) / 60)}m (R1) / {Math.floor((quizEvent?.round2Duration || 1200) / 60)}m (R2)
                   </span>
                 </div>
+                {debugEvent?.status === 'RUNNING' && (
+                  <div style={{ marginTop: '4px', fontSize: '0.75rem', color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: '4px', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span>⚠️</span>
+                    <span>Only 1 event can run at a time. C Debugging is currently LIVE. Starting Quiz will pause Debugging.</span>
+                  </div>
+                )}
               </div>
 
               <div className={styles.minimalEventActions}>
@@ -1712,6 +1754,12 @@ export default function AdminPage() {
                   <span>•</span>
                   <span>GCC C11 Execution Sandbox (Pool: 8 Concurrency)</span>
                 </div>
+                {quizEvent?.status === 'RUNNING' && (
+                  <div style={{ marginTop: '4px', fontSize: '0.75rem', color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: '4px', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span>⚠️</span>
+                    <span>Only 1 event can run at a time. Technical Quiz is currently LIVE. Starting Debugging will pause Quiz.</span>
+                  </div>
+                )}
               </div>
 
               <div className={styles.minimalEventActions}>

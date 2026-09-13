@@ -201,15 +201,15 @@ export default function WaitingPage() {
                 </button>
               ) : debugEvent?.status === 'READY' ? (
                 <button className={styles.btnDisabled} disabled>
-                  ⏳ Standby — Ready to Launch
+                  {isQuizRunning ? '⏳ Standby (Quiz is currently Live)' : '⏳ Standby — Ready to Launch'}
                 </button>
               ) : debugEvent?.status === 'PAUSED' ? (
                 <button className={styles.btnDisabled} disabled>
-                  ⏸ Arena Paused by Administrator
+                  {isQuizRunning ? '⏸ Standby (Quiz is currently Live)' : '⏸ Arena Paused by Administrator'}
                 </button>
               ) : (
                 <button className={styles.btnDisabled} disabled>
-                  {debugEvent?.status === 'FINISHED' ? '🏁 Arena Concluded' : '⏳ Standby'}
+                  {debugEvent?.status === 'FINISHED' ? '🏁 Arena Concluded' : isQuizRunning ? '⏳ Standby (Quiz is Live)' : '⏳ Standby'}
                 </button>
               )}
             </div>
@@ -242,6 +242,8 @@ export default function WaitingPage() {
                     </span>
                   ) : quizEvent?.round1Status === 'FINISHED' && quizEvent?.round2Status !== 'FINISHED' ? (
                     <span className={styles.badgeReady}>INTERMISSION</span>
+                  ) : quizEvent?.status === 'PAUSED' || quizEvent?.round1Status === 'PAUSED' || quizEvent?.round2Status === 'PAUSED' ? (
+                    <span className={styles.badgePaused}>PAUSED</span>
                   ) : quizEvent?.status === 'READY' ? (
                     <span className={styles.badgeReady}>READY</span>
                   ) : (
@@ -309,13 +311,17 @@ export default function WaitingPage() {
                     Round 1 Completed
                   </button>
                 )
+              ) : quizEvent?.status === 'PAUSED' || quizEvent?.round1Status === 'PAUSED' || quizEvent?.round2Status === 'PAUSED' ? (
+                <button className={styles.btnDisabled} disabled>
+                  {isDebugRunning ? '⏸ Standby (Debugging Arena is Live)' : '⏸ Quiz Paused by Administrator'}
+                </button>
               ) : quizEvent?.status === 'READY' ? (
                 <button className={styles.btnDisabled} disabled>
-                  ⏳ Standby — Ready to Launch
+                  {isDebugRunning ? '⏳ Standby (Debugging Arena is Live)' : '⏳ Standby — Ready to Launch'}
                 </button>
               ) : (
                 <button className={styles.btnDisabled} disabled>
-                  {quizEvent?.status === 'FINISHED' ? '🏁 Quiz Concluded' : '⏳ Standby'}
+                  {quizEvent?.status === 'FINISHED' ? '🏁 Quiz Concluded' : isDebugRunning ? '⏳ Standby (Debugging Arena is Live)' : '⏳ Standby'}
                 </button>
               )}
             </div>

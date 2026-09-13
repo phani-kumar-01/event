@@ -633,12 +633,20 @@ export default function QuizPage() {
         {/* ── Main Stage Area ─────────────────────────────────────────────── */}
         <main className={styles.main}>
           {!isEventRunning && (
-            <div className={styles.statusNotice}>
-              {event?.status === 'PAUSED' && '⏸ Technical Quiz is paused by Admin. Stand by...'}
-              {event?.status === 'READY' && '🕐 Round is ready to start. Get ready!'}
-              {event?.status === 'FINISHED' &&
-                '🏁 Round has ended. The admin will verify results shortly.'}
-              {event?.status === 'DRAFT' && '🕐 Competition is being initialized.'}
+            <div className={styles.statusNotice} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <span>
+                {event?.status === 'PAUSED' && '⏸ Technical Quiz is paused by Admin (only one event runs at a time). Progress and timer are preserved.'}
+                {event?.status === 'READY' && '🕐 Round is ready to start. Get ready!'}
+                {event?.status === 'FINISHED' &&
+                  '🏁 Round has ended. The admin will verify results shortly.'}
+                {event?.status === 'DRAFT' && '🕐 Competition is being initialized.'}
+              </span>
+              <button
+                onClick={() => navigate('/waiting?lobby=true')}
+                style={{ padding: '3px 8px', fontSize: '12px', background: '#ffffff', border: '1px solid #d97706', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, color: '#92400e' }}
+              >
+                ← Return to Lobby
+              </button>
             </div>
           )}
 

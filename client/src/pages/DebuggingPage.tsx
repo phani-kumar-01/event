@@ -524,6 +524,22 @@ export default function DebuggingPage() {
         </div>
       </header>
 
+      {/* ── Event State Alert Banner (Paused / Non-running) ─────────────── */}
+      {event?.status === 'PAUSED' && (
+        <div style={{ background: '#fef3c7', borderBottom: '1px solid #fde68a', padding: '8px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '13px', color: '#92400e', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>⏸</span>
+            <span><strong>Event Paused:</strong> Administrator has paused this arena (only one event runs at a time). Your timer and code are saved.</span>
+          </div>
+          <button
+            onClick={() => navigate('/waiting?lobby=true')}
+            style={{ padding: '4px 10px', fontSize: '12px', background: '#ffffff', border: '1px solid #f59e0b', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, color: '#92400e' }}
+          >
+            ← Return to Lobby
+          </button>
+        </div>
+      )}
+
       {/* ── Main Layout ───────────────────────────────────────────────────── */}
       <div className={styles.layout}>
         {/* ── Minimalist Problem Navigator (Left Panel) ───────────────────── */}

@@ -96,11 +96,50 @@ export function validateTransition(current: EventStatus, next: EventStatus): voi
 }
 
 /**
+ * Strict Single Running Event Invariant:
+ * Enforces that ONLY ONE event can be in RUNNING status at any given time.
+ * If another event is currently RUNNING, it is automatically PAUSED.
+ */
+export async function enforceSingleRunningEvent(activeEventId: string): Promise<Event[]> {
+  const otherRunning = await prisma.event.findMany({
+    where: {
+      id: { not: activeEventId },
+      status: 'RUNNING',
+    },
+  });
+
+  const pausedList: Event[] = [];
+
+  for (const other of otherRunning) {
+    const isQuiz = other.type === 'TECHNICAL_QUIZ';
+    const paused = await prisma.event.update({
+      where: { id: other.id },
+      data: {
+        status: 'PAUSED',
+        ...(isQuiz && other.round1Status === 'RUNNING' && { round1Status: 'PAUSED' }),
+        ...(isQuiz && other.round2Status === 'RUNNING' && { round2Status: 'PAUSED' }),
+        version: { increment: 1 },
+      },
+    });
+    pausedList.push(paused);
+    console.log(
+      `[Single-Event Guard] Automatically paused other running event "${other.name}" (${other.id}) because "${activeEventId}" was started/resumed.`
+    );
+  }
+
+  invalidateCurrentEventCache();
+  return pausedList;
+}
+
+/**
  * Start an event: set status RUNNING, record startTime, increment version.
  */
 export async function startEvent(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
   validateTransition(event.status as EventStatus, 'RUNNING');
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
 
   const now = new Date();
   const endsAt = new Date(now.getTime() + event.durationSeconds * 1000);
@@ -128,6 +167,10 @@ export async function startEvent(eventId: string) {
  */
 export async function startRound1(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
+
   const now = new Date();
   const endsAt = new Date(now.getTime() + (event.round1Duration || 1800) * 1000);
 
@@ -163,6 +206,10 @@ export async function pauseRound1(eventId: string) {
  */
 export async function resumeRound1(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
+
   const now = new Date();
   const remainingMs = Math.max(event.endTime.getTime() - event.updatedAt.getTime(), 60000);
   const newEndTime = new Date(now.getTime() + remainingMs);
@@ -314,6 +361,10 @@ export async function computeRound1Qualifiers(eventId: string, overrideTopCount?
  */
 export async function startRound2(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
+
   const now = new Date();
   const endsAt = new Date(now.getTime() + (event.round2Duration || 1200) * 1000);
 
@@ -349,6 +400,10 @@ export async function pauseRound2(eventId: string) {
  */
 export async function resumeRound2(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
+
   const now = new Date();
   const remainingMs = Math.max(event.endTime.getTime() - event.updatedAt.getTime(), 60000);
   const newEndTime = new Date(now.getTime() + remainingMs);
@@ -496,6 +551,9 @@ export async function pauseEvent(eventId: string) {
 export async function resumeEvent(eventId: string) {
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
   validateTransition(event.status as EventStatus, 'RUNNING');
+
+  // Enforce single running event invariant
+  await enforceSingleRunningEvent(eventId);
 
   const now = new Date();
   const remainingMs = event.endTime.getTime() - event.updatedAt.getTime();
